@@ -131,16 +131,7 @@ local function _resetIsAnyBase(plot)
     return math.abs(pos.X) <= size.X / 2 + 5 and math.abs(pos.Z) <= size.Z / 2 + 5
 end
 
-local function _forceResetCarpetInsideBase()
-    local plots = Workspace:FindFirstChild("Plots")
-    local inside = false
-    if plots then
-        for _, plot in ipairs(plots:GetChildren()) do
-            if _resetIsAnyBase(plot) then inside = true break end
-        end
-    end
-    if not inside then return false end
-
+local function _equipResetCarpet()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -150,7 +141,8 @@ local function _forceResetCarpetInsideBase()
     local function match(tool)
         if not tool or not tool:IsA("Tool") then return false end
         local n = tool.Name:lower():gsub("%s+", " ")
-        return n:find("flying carpet", 1, true) ~= nil
+        return n:find("carpet", 1, true) ~= nil
+            or n:find("flying carpet", 1, true) ~= nil
             or n:find("carpet flying", 1, true) ~= nil
             or n:find("magic carpet", 1, true) ~= nil
     end
@@ -167,7 +159,7 @@ local function _forceResetCarpetInsideBase()
     pcall(function()
         if carpet.Parent ~= char then hum:EquipTool(carpet) end
     end)
-    local deadline = tick() + 0.25
+    local deadline = tick() + 0.5
     while carpet.Parent ~= char and tick() < deadline do task.wait() end
     return carpet.Parent == char
 end
@@ -181,7 +173,8 @@ local function ResetPlayer()
     local character = LocalPlayer.Character
     if not character then resetCooldown = false return end
 
-    pcall(_forceResetCarpetInsideBase)
+    -- Equipa o carpet primeiro; se não houver um disponível, o reset continua normalmente.
+    pcall(_equipResetCarpet)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     if not humanoid then resetCooldown = false return end
 
@@ -1125,6 +1118,156 @@ function stopAntiRagdoll()
 end
 
 -- ==========================================
+-- KORBLOX LEG
+-- ==========================================
+local KorbloxLeg = {
+    enabled = false,
+    original = {},
+    character = nil,
+}
+
+local KORBLOX_RIGHT_LEG_ASSET = "rbxassetid://139607718"
+local KORBLOX_RIGHT_LEG_NAME = "Korblox_RightLeg"
+
+local function korbloxGetRigData(character)
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local isR15 = humanoid and humanoid.RigType == Enum.HumanoidRigType.R15
+    if isR15 then
+        return "RightUpperLeg", {"RightUpperLeg", "RightLowerLeg", "RightFoot"}
+    end
+    return "Right Leg", {"Right Leg"}
+end
+
+local function korbloxRestoreCharacter(character)
+    if not character then return end
+    local oldAsset = character:FindFirstChild(KORBLOX_RIGHT_LEG_NAME)
+    if oldAsset then pcall(function() oldAsset:Destroy() end) end
+    local saved = KorbloxLeg.original[character]
+    if saved then
+        for part, values in pairs(saved) do
+            if part and part.Parent then
+                pcall(function()
+                    part.Transparency = values.transparency
+                    part.CanCollide = values.canCollide
+                end)
+            end
+        end
+        KorbloxLeg.original[character] = nil
+    end
+end
+
+local function korbloxFetchAsset()
+    local ok, objects = pcall(function()
+        return game:GetObjects(KORBLOX_RIGHT_LEG_ASSET)
+    end)
+    if not ok or not objects or #objects == 0 then return nil end
+    local asset = objects[1]
+    for _, obj in ipairs(asset:GetDescendants()) do
+        if obj:IsA("Script") or obj:IsA("LocalScript") then
+            pcall(function() obj:Destroy() end)
+        end
+    end
+    return asset
+end
+
+local function korbloxApply(character)
+    if not character then return false end
+    local targetPartName, partsToHide = korbloxGetRigData(character)
+    local targetPart = character:FindFirstChild(targetPartName)
+    if not targetPart then return false end
+
+    korbloxRestoreCharacter(character)
+    KorbloxLeg.original[character] = {}
+    for _, partName in ipairs(partsToHide) do
+        local part = character:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            KorbloxLeg.original[character][part] = {
+                transparency = part.Transparency,
+                canCollide = part.CanCollide,
+            }
+            part.Transparency = 1
+            part.CanCollide = false
+        end
+    end
+
+    local asset = korbloxFetchAsset()
+    if not asset then
+        korbloxRestoreCharacter(character)
+        return false
+    end
+    asset.Name = KORBLOX_RIGHT_LEG_NAME
+    local mesh = asset:IsA("BasePart") and asset or asset:FindFirstChildWhichIsA("BasePart", true)
+    if not mesh then
+        pcall(function() asset:Destroy() end)
+        korbloxRestoreCharacter(character)
+        return false
+    end
+
+    local originalSize = mesh.Size
+    local refWidth = math.max(targetPart.Size.X, targetPart.Size.Z)
+    local meshWidth = math.max(originalSize.X, originalSize.Z)
+    local widthRatio = 1
+    if meshWidth > 0 and refWidth > 0 then
+        widthRatio = math.clamp(refWidth / meshWidth, 0.8, 1.35)
+    end
+    mesh.Size = Vector3.new(originalSize.X * widthRatio, originalSize.Y, originalSize.Z * widthRatio)
+    mesh.CanCollide = false
+    mesh.Massless = true
+    mesh.Anchored = false
+
+    local centerPos = Vector3.new(
+        targetPart.Position.X,
+        targetPart.Position.Y + targetPart.Size.Y / 2 - mesh.Size.Y / 2,
+        targetPart.Position.Z
+    )
+    local targetRotation = targetPart.CFrame - targetPart.CFrame.Position
+    mesh.CFrame = CFrame.new(centerPos) * targetRotation
+
+    local weld = Instance.new("Weld")
+    weld.Name = "KorbloxWeld"
+    weld.Part0 = targetPart
+    weld.Part1 = mesh
+    weld.C0 = targetPart.CFrame:Inverse() * mesh.CFrame
+    weld.C1 = CFrame.new()
+    weld.Parent = mesh
+    asset.Parent = character
+    KorbloxLeg.character = character
+    return true
+end
+
+function KorbloxLeg.set(enabled)
+    KorbloxLeg.enabled = enabled == true
+    local character = LocalPlayer.Character
+    if not KorbloxLeg.enabled then
+        korbloxRestoreCharacter(character)
+        KorbloxLeg.character = nil
+        return
+    end
+    task.spawn(function()
+        for _ = 1, 20 do
+            if not KorbloxLeg.enabled then return end
+            if korbloxApply(LocalPlayer.Character) then return end
+            task.wait(0.15)
+        end
+    end)
+end
+
+function KorbloxLeg.isEnabled()
+    return KorbloxLeg.enabled == true
+end
+
+table.insert(ActiveConnections, LocalPlayer.CharacterAdded:Connect(function(character)
+    KorbloxLeg.original[character] = nil
+    if KorbloxLeg.enabled then
+        task.delay(1.5, function()
+            if KorbloxLeg.enabled and LocalPlayer.Character == character then
+                korbloxApply(character)
+            end
+        end)
+    end
+end))
+
+-- ==========================================
 -- SETTINGS
 -- ==========================================
 local SETTINGS_FILE = "high_pvp_settings.json"
@@ -1161,17 +1304,32 @@ local function savedColor3(data, key, defaultValue)
 end
 
 -- ==========================================
--- MINECRAFT FONT TOGGLE
+-- FONT SELECTOR
 -- ==========================================
-local FontMinecraft = (function()
-    local TargetFont = Enum.Font.Arcade
-    local TargetFontFace
-    pcall(function() TargetFontFace = Font.fromEnum(TargetFont) end)
-    local protectedNames = {"logo", "menu", "topbar", "party"}
+local FontSelector = (function()
+    local fonts = {
+        { name = "Gotham Bold", enum = Enum.Font.GothamBold },
+        { name = "Gotham", enum = Enum.Font.Gotham },
+        { name = "Gotham Black", enum = Enum.Font.GothamBlack },
+        { name = "Source Sans", enum = Enum.Font.SourceSansBold },
+        { name = "Fredoka One", enum = Enum.Font.FredokaOne },
+        { name = "Cartoon", enum = Enum.Font.Cartoon },
+        { name = "Arcade", enum = Enum.Font.Arcade },
+        { name = "Code", enum = Enum.Font.Code },
+        { name = "Sci-Fi", enum = Enum.Font.SciFi },
+        { name = "Fantasy", enum = Enum.Font.Fantasy },
+        { name = "Highway", enum = Enum.Font.Highway },
+    }
     local originalFonts = {}
     local watchers = {}
-    local enabled = false
-    local targetRoot
+    local selectedName = "Gotham Bold"
+
+    local function getFont(name)
+        for _, item in ipairs(fonts) do
+            if item.name == name then return item.enum end
+        end
+        return Enum.Font.GothamBold
+    end
 
     local function isProtected(instance)
         local name = string.lower(instance.Name or "")
@@ -1181,7 +1339,7 @@ local FontMinecraft = (function()
             if ancestor.Name == "HighBanner" then return false end
             ancestor = ancestor.Parent
         end
-        for _, protected in ipairs(protectedNames) do
+        for _, protected in ipairs({"logo", "menu", "topbar", "party"}) do
             if string.find(name, protected, 1, true) or string.find(parentName, protected, 1, true) then
                 return true
             end
@@ -1189,23 +1347,14 @@ local FontMinecraft = (function()
         return false
     end
 
-    local function apply(instance)
+    local function rememberAndApply(instance)
         pcall(function()
-            if not enabled or isProtected(instance) then return end
+            if isProtected(instance) then return end
             if not (instance:IsA("TextLabel") or instance:IsA("TextButton") or instance:IsA("TextBox")) then return end
             if not originalFonts[instance] then
                 originalFonts[instance] = { Font = instance.Font, FontFace = instance.FontFace }
             end
-            instance.Font = TargetFont
-            if TargetFontFace then instance.FontFace = TargetFontFace end
-        end)
-    end
-
-    local function watch(parent)
-        if not parent then return end
-        pcall(function()
-            for _, descendant in ipairs(parent:GetDescendants()) do apply(descendant) end
-            table.insert(watchers, parent.DescendantAdded:Connect(apply))
+            instance.Font = getFont(selectedName)
         end)
     end
 
@@ -1226,32 +1375,31 @@ local FontMinecraft = (function()
         originalFonts = {}
     end
 
-    local function set(state, root)
-        state = state == true
-        if enabled == state and (not state or targetRoot == root) then return end
-        if enabled then
-            stopWatchers()
-            restore()
-        end
-        enabled = state
-        if enabled then
-            targetRoot = root
-            if targetRoot then watch(targetRoot) end
-        else
-            stopWatchers()
-            restore()
-            targetRoot = nil
-        end
+    local function watch(root)
+        if not root then return end
+        pcall(function()
+            for _, descendant in ipairs(root:GetDescendants()) do rememberAndApply(descendant) end
+            table.insert(watchers, root.DescendantAdded:Connect(rememberAndApply))
+        end)
+    end
+
+    local function set(name, root)
+        if type(name) == "string" and getFont(name) then selectedName = name end
+        stopWatchers()
+        restore()
+        if root then watch(root) end
     end
 
     local function addRoot(root)
-        if enabled and root then watch(root) end
+        if root then watch(root) end
     end
 
     return {
+        fonts = fonts,
         set = set,
         addRoot = addRoot,
-        isEnabled = function() return enabled end,
+        getName = function() return selectedName end,
+        getFont = getFont,
     }
 end)()
 
@@ -1532,7 +1680,7 @@ _G.InfiniteJumpEnabled = savedBool(savedSettings, "InfiniteJump", false)
 _G.AutoTurretEnabled = savedBool(savedSettings, "AutoTurret", false)
 _G.GummyBypassEnabled = savedBool(savedSettings, "GummyBypass", false)
 _G.AntiAdminEnabled = savedBool(savedSettings, "AntiAdmin", false)
-_G.FontMinecraftEnabled = savedBool(savedSettings, "FontMinecraft", false)
+_G.SelectedFont = savedSettings.SelectedFont or "Gotham Bold"
 _G.HideAdminPanel = savedBool(savedSettings, "HideAdminPanel", false)
 _G.LineToBase = savedBool(savedSettings, "LineToBase", false)
 _G.MineESPEnabled = savedBool(savedSettings, "MineESP", false)
@@ -1582,6 +1730,8 @@ function AutoBalloon.set(on)
 end
 _G.AutoBalloon=AutoBalloon
 _G.FpsBooster = savedSettings.FpsBooster == nil and true or savedSettings.FpsBooster
+_G.KorbloxLegEnabled = savedBool(savedSettings, "KorbloxLeg", false)
+KorbloxLeg.enabled = _G.KorbloxLegEnabled == true
 
 local WalkItemOptions = { "Flying Carpet", "Cupid's Wings", "Witch's Broom", "Waverider", "Santa's Sleigh", "Flying Bee" }
 if savedSettings.WalkItem ~= nil and table.find(WalkItemOptions, savedSettings.WalkItem) then
@@ -6063,8 +6213,9 @@ local function BuildHUB()
         AutoCarpetSpeed = function() return _G.AutoCarpetSpeed or false end,
         AntiDie = function() return _G.AntiDie or false end,
         AutoBalloon = function() return _G.AutoBalloonEnabled == true end,
-        FontMinecraft = function() return _G.FontMinecraftEnabled == true end,
+        SelectedFont = function() return _G.SelectedFont or "Gotham Bold" end,
         FpsBooster = function() return _G.FpsBooster == true end,
+        KorbloxLeg = function() return _G.KorbloxLegEnabled == true end,
         CloneESP = function() return _G.CloneESPEnabled == true end,
         AllowDisallowESP = function() return _G.AllowDisallowESPEnabled == true end,
         GameStretcher = function() return _G.GameStretcher and _G.GameStretcher.isEnabled() end,
@@ -6436,13 +6587,12 @@ local function BuildHUB()
         saveSettings()
     end)
 
-    sectionHeader(ScrollMisc, "  FONT MINECRAFT  ")
+    sectionHeader(ScrollMisc, "  FONTS  ")
     do
         sectionOrder += 1
         local fontRow = Instance.new("Frame")
         fontRow.Size = UDim2.new(0.92, 0, 0, 42)
         fontRow.AnchorPoint = Vector2.new(0.5, 0)
-        fontRow.Position = UDim2.new(0.5, 0, 0, 0)
         fontRow.BackgroundColor3 = C.card
         fontRow.BackgroundTransparency = 0.35
         fontRow.BorderSizePixel = 0
@@ -6455,10 +6605,10 @@ local function BuildHUB()
         fontStroke.Transparency = 0.2
 
         local fontLabel = Instance.new("TextLabel", fontRow)
-        fontLabel.Size = UDim2.new(1, -112, 1, 0)
+        fontLabel.Size = UDim2.new(1, -150, 1, 0)
         fontLabel.Position = UDim2.new(0, 12, 0, 0)
         fontLabel.BackgroundTransparency = 1
-        fontLabel.Text = "Font Minecraft"
+        fontLabel.Text = "Fonts"
         fontLabel.TextColor3 = C.textBright
         fontLabel.TextSize = 12
         fontLabel.Font = Enum.Font.GothamMedium
@@ -6466,36 +6616,86 @@ local function BuildHUB()
         fontLabel.ZIndex = 7
 
         local fontButton = Instance.new("TextButton", fontRow)
-        fontButton.Size = UDim2.new(0, 88, 0, 26)
-        fontButton.Position = UDim2.new(1, -98, 0.5, -13)
+        fontButton.Size = UDim2.new(0, 126, 0, 26)
+        fontButton.Position = UDim2.new(1, -136, 0.5, -13)
         fontButton.BackgroundColor3 = C.iconBg
         fontButton.BorderSizePixel = 0
         fontButton.AutoButtonColor = false
-        fontButton.TextSize = 11
+        fontButton.TextSize = 10
         fontButton.Font = Enum.Font.GothamBold
+        fontButton.TextColor3 = C.textBright
+        fontButton.Text = _G.SelectedFont
         fontButton.ZIndex = 8
         Instance.new("UICorner", fontButton).CornerRadius = UDim.new(0, 6)
         local fontButtonStroke = Instance.new("UIStroke", fontButton)
         fontButtonStroke.Color = C.accent
         fontButtonStroke.Transparency = 0.2
 
-        local function refreshFontButton()
-            local active = FontMinecraft.isEnabled()
-            fontButton.Text = active and "Active" or "Disable"
-            fontButton.TextColor3 = active and C.accentHi or C.textMute
-            fontButton.BackgroundTransparency = active and 0.05 or 0.35
+        sectionOrder += 1
+        local fontList = Instance.new("Frame")
+        fontList.Size = UDim2.new(0.92, 0, 0, 0)
+        fontList.AnchorPoint = Vector2.new(0.5, 0)
+        fontList.BackgroundColor3 = C.card
+        fontList.BackgroundTransparency = 0.4
+        fontList.BorderSizePixel = 0
+        fontList.LayoutOrder = sectionOrder
+        fontList.Visible = false
+        fontList.ClipsDescendants = true
+        fontList.Parent = ScrollMisc
+        fontList.ZIndex = 5
+        Instance.new("UICorner", fontList).CornerRadius = UDim.new(0, 8)
+        local fontListStroke = Instance.new("UIStroke", fontList)
+        fontListStroke.Color = C.strokeDim
+        fontListStroke.Transparency = 0.35
+        local fontLayout = Instance.new("UIListLayout", fontList)
+        fontLayout.Padding = UDim.new(0, 3)
+        fontLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        local fontPadding = Instance.new("UIPadding", fontList)
+        fontPadding.PaddingTop = UDim.new(0, 5)
+        fontPadding.PaddingBottom = UDim.new(0, 5)
+
+        local expanded = false
+        local fontButtons = {}
+        local function refreshFontUI()
+            fontButton.Text = FontSelector.getName()
+            for name, button in pairs(fontButtons) do
+                button.BackgroundColor3 = (name == FontSelector.getName()) and C.accent or C.iconBg
+                button.TextColor3 = (name == FontSelector.getName()) and C.textBright or C.textMute
+            end
+        end
+        local function setFontListVisible(on)
+            expanded = on == true
+            fontList.Visible = expanded
+            fontList.Size = expanded and UDim2.new(0.92, 0, 0, 10 + (#FontSelector.fonts * 29)) or UDim2.new(0.92, 0, 0, 0)
         end
         fontButton.MouseButton1Click:Connect(function()
-            _G.FontMinecraftEnabled = not _G.FontMinecraftEnabled
-            FontMinecraft.set(_G.FontMinecraftEnabled, HIGH_HUB_GUI)
-            if _G.FontMinecraftEnabled then
-                FontMinecraft.addRoot((LocalPlayer:FindFirstChildOfClass("PlayerGui") or PlayerGui):FindFirstChild("HighBanner"))
-            end
-            refreshFontButton()
-            saveSettings()
+            setFontListVisible(not expanded)
         end)
-        if _G.FontMinecraftEnabled then FontMinecraft.set(true, HIGH_HUB_GUI) end
-        refreshFontButton()
+        for i, item in ipairs(FontSelector.fonts) do
+            local button = Instance.new("TextButton", fontList)
+            button.Size = UDim2.new(0.92, 0, 0, 26)
+            button.BackgroundColor3 = C.iconBg
+            button.BackgroundTransparency = 0.15
+            button.BorderSizePixel = 0
+            button.AutoButtonColor = false
+            button.Text = item.name
+            button.TextSize = 11
+            button.Font = item.enum
+            button.TextColor3 = C.textBright
+            button.LayoutOrder = i
+            button.ZIndex = 7
+            Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
+            fontButtons[item.name] = button
+            button.MouseButton1Click:Connect(function()
+                _G.SelectedFont = item.name
+                FontSelector.set(item.name, HIGH_HUB_GUI)
+                refreshFontUI()
+                setFontListVisible(false)
+                saveSettings()
+            end)
+        end
+        FontSelector.set(_G.SelectedFont, HIGH_HUB_GUI)
+        refreshFontUI()
     end
 
     sectionHeader(ScrollVisual, "  ESP  ")
@@ -6534,6 +6734,62 @@ local function BuildHUB()
         if v then UltraBooster.start() else UltraBooster.stop() end
         saveSettings()
     end)
+
+    do
+        sectionOrder += 1
+        local korbloxRow = Instance.new("Frame")
+        korbloxRow.Size = UDim2.new(0.92, 0, 0, 42)
+        korbloxRow.AnchorPoint = Vector2.new(0.5, 0)
+        korbloxRow.BackgroundColor3 = C.card
+        korbloxRow.BackgroundTransparency = 0.35
+        korbloxRow.BorderSizePixel = 0
+        korbloxRow.LayoutOrder = sectionOrder
+        korbloxRow.Parent = ScrollVisual
+        korbloxRow.ZIndex = 6
+        Instance.new("UICorner", korbloxRow).CornerRadius = UDim.new(0, 8)
+        local korbloxStroke = Instance.new("UIStroke", korbloxRow)
+        korbloxStroke.Color = C.strokeDim
+        korbloxStroke.Transparency = 0.2
+
+        local korbloxLabel = Instance.new("TextLabel", korbloxRow)
+        korbloxLabel.Size = UDim2.new(1, -112, 1, 0)
+        korbloxLabel.Position = UDim2.new(0, 12, 0, 0)
+        korbloxLabel.BackgroundTransparency = 1
+        korbloxLabel.Text = "Korblox Leg"
+        korbloxLabel.TextColor3 = C.textBright
+        korbloxLabel.TextSize = 12
+        korbloxLabel.Font = Enum.Font.GothamMedium
+        korbloxLabel.TextXAlignment = Enum.TextXAlignment.Left
+        korbloxLabel.ZIndex = 7
+
+        local korbloxButton = Instance.new("TextButton", korbloxRow)
+        korbloxButton.Size = UDim2.new(0, 88, 0, 26)
+        korbloxButton.Position = UDim2.new(1, -98, 0.5, -13)
+        korbloxButton.BackgroundColor3 = C.iconBg
+        korbloxButton.BorderSizePixel = 0
+        korbloxButton.AutoButtonColor = false
+        korbloxButton.TextSize = 11
+        korbloxButton.Font = Enum.Font.GothamBold
+        korbloxButton.ZIndex = 8
+        Instance.new("UICorner", korbloxButton).CornerRadius = UDim.new(0, 6)
+        local korbloxButtonStroke = Instance.new("UIStroke", korbloxButton)
+        korbloxButtonStroke.Color = C.accent
+        korbloxButtonStroke.Transparency = 0.2
+
+        local function refreshKorbloxButton()
+            local active = KorbloxLeg.isEnabled()
+            korbloxButton.Text = active and "Active" or "Disable"
+            korbloxButton.TextColor3 = active and C.accentHi or C.textMute
+            korbloxButton.BackgroundTransparency = active and 0.05 or 0.35
+        end
+        korbloxButton.MouseButton1Click:Connect(function()
+            _G.KorbloxLegEnabled = not _G.KorbloxLegEnabled
+            KorbloxLeg.set(_G.KorbloxLegEnabled)
+            refreshKorbloxButton()
+            saveSettings()
+        end)
+        refreshKorbloxButton()
+    end
 
     sectionHeader(ScrollVisual, "  BACKPACK ESP  ")
     do
@@ -6926,7 +7182,7 @@ do
         local root = Instance.new("Frame")
         root.Name = "Root"
         root.Position = UDim2.fromOffset(18, 38)
-        root.Size = UDim2.fromOffset(292, 44)
+        root.Size = UDim2.fromOffset(292, 58)
         root.BackgroundColor3 = BannerC.body
         root.BackgroundTransparency = 0.08
         root.BorderSizePixel = 0
@@ -6939,7 +7195,7 @@ do
         local logo = Instance.new("TextLabel", root)
         logo.BackgroundTransparency = 1
         logo.Position = UDim2.fromOffset(12, 0)
-        logo.Size = UDim2.fromOffset(31, 44)
+        logo.Size = UDim2.fromOffset(31, 58)
         logo.Font = Enum.Font.GothamBold
         logo.Text = "H"
         -- 🆕 cor do H igual às demais (branco/cinza claro)
@@ -6948,14 +7204,24 @@ do
         local info = Instance.new("TextLabel", root)
         info.BackgroundTransparency = 1
         info.Position = UDim2.fromOffset(48, 0)
-        info.Size = UDim2.new(1, -58, 1, 0)
+        info.Size = UDim2.new(1, -58, 0, 30)
         info.Font = Enum.Font.GothamSemibold
         info.Text = "High  |   0 FPS  |  0 ms"
         info.TextColor3 = BannerC.textBright
         info.TextSize = 13
         info.TextXAlignment = Enum.TextXAlignment.Left
+        local discord = Instance.new("TextLabel", root)
+        discord.Name = "Discord"
+        discord.BackgroundTransparency = 1
+        discord.Position = UDim2.fromOffset(48, 31)
+        discord.Size = UDim2.new(1, -58, 0, 18)
+        discord.Font = Enum.Font.GothamBold
+        discord.Text = "discord.gg/SDXUMCrUcM"
+        discord.TextColor3 = BannerC.accent
+        discord.TextSize = 11
+        discord.TextXAlignment = Enum.TextXAlignment.Left
         local bannerGradients = {}
-        for _, label in ipairs({logo, info}) do
+        for _, label in ipairs({logo, info, discord}) do
             local gradient = Instance.new("UIGradient")
             gradient.Color = ColorSequence.new({
                 ColorSequenceKeypoint.new(0, BannerC.textBright),
@@ -6972,7 +7238,7 @@ do
                 if gradient and gradient.Parent then gradient.Rotation = rotation end
             end
         end))
-        if FontMinecraft.isEnabled() then FontMinecraft.addRoot(gui) end
+        FontSelector.addRoot(gui)
         local frames, elapsed, fps = 0, 0, 0
         local renderConn = RunService.RenderStepped:Connect(function(dt)
             frames += 1; elapsed += dt
@@ -7031,6 +7297,7 @@ task.defer(function()
         if _G.GummyBypassEnabled and _G.GummyBypass and _G.GummyBypass.set then _G.GummyBypass.set(true) end
         if _G.AntiAdminEnabled and _G.AntiAdmin and _G.AntiAdmin.set then _G.AntiAdmin.set(true) end
         if _G.FpsBooster then UltraBooster.start() end
+        if _G.KorbloxLegEnabled then KorbloxLeg.set(true) end
         -- 🆕 PATCH: os watchers de Bypass Protect V2 / Auto Return Base
         -- já checam _G.BypassProtectV2 / _G.AutoReturnBase a cada tick,
         -- então não é necessário boot explícito aqui.
@@ -7057,6 +7324,7 @@ local function cleanup()
     clearAPESP()
     clearPlayerESP()
     UltraBooster.stop()
+    KorbloxLeg.set(false)
     hhStopAutoCarpet()
     stopAntiDie()
     if BypassProtectV1 and BypassProtectV1.set then BypassProtectV1.set(false) end

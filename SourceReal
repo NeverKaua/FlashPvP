@@ -1544,6 +1544,7 @@ _G.AutoLaser           = savedBool(savedSettings, "AutoLaser", false)
 _G.SelectBestBrainrot  = savedBool(savedSettings, "SelectBestBrainrot", false)
 
 _G.BypassProtectV2     = savedBool(savedSettings, "BypassProtectV2", false)
+_G.BypassProtectV1     = savedBool(savedSettings, "BypassProtectV1", false)
 _G.AutoReturnBase      = savedBool(savedSettings, "AutoReturnBase", false)
 
 -- ==========================================
@@ -3384,6 +3385,231 @@ local function isMyPlot(plot)
         if yourBase and yourBase:IsA("BillboardGui") and yourBase.Enabled then return true end
     end
     return false
+end
+
+-- ==========================================
+-- BYPASS PROTECT V1
+-- Integra a lógica da source V1 ao fluxo de steal existente.
+-- A interface deste recurso é criada no BuildHUB e fica sempre visível.
+-- ==========================================
+local BypassProtectV1 = {
+    enabled = false,
+    activeThread = 0,
+    blockTriggered = false,
+    wasStealing = false,
+    resetAnimationPlaying = false,
+    currentCharacterId = 0,
+    loop = nil,
+    characterConnections = {},
+}
+
+local BYPASS_V1_BLOCK_RADIUS = 5
+local BYPASS_V1_RESET_ANIMATION_ID = "71186871415348"
+
+local function bypassV1GetHRP()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+        or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
+end
+
+local function bypassV1IsWithinBlockRadius()
+    if BypassProtectV1.resetAnimationPlaying then return false end
+    local hrp = bypassV1GetHRP()
+    local plots = Workspace:FindFirstChild("Plots")
+    if not hrp or not plots then return false end
+
+    for _, plot in ipairs(plots:GetChildren()) do
+        if not isMyPlot(plot) then
+            local pods = plot:FindFirstChild("AnimalPodiums")
+            if pods then
+                for _, pod in ipairs(pods:GetChildren()) do
+                    local base = pod:FindFirstChild("Base")
+                    local spawn = base and base:FindFirstChild("Spawn")
+                    if spawn and (spawn.Position - hrp.Position).Magnitude <= BYPASS_V1_BLOCK_RADIUS then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function bypassV1DrawClickDot(x, y)
+    if not Drawing then return end
+    local dot = Drawing.new("Circle")
+    dot.Radius = 5
+    dot.Position = Vector2.new(x, y)
+    dot.Color = Color3.fromRGB(0, 180, 255)
+    dot.Filled = true
+    dot.Visible = true
+    dot.Transparency = 0.6
+    task.delay(0.25, function()
+        pcall(function() dot:Remove() end)
+    end)
+end
+
+local function bypassV1BlockPlayer(targetPlayer)
+    if not targetPlayer or targetPlayer == LocalPlayer then return end
+
+    pcall(function()
+        StarterGui:SetCore("PromptBlockPlayer", targetPlayer)
+    end)
+
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local viewport = cam.ViewportSize
+    local x = math.floor(viewport.X / 2) + math.random(-1, 1)
+    local y = math.floor(viewport.Y / 2 + 50) + math.random(-1, 1)
+    local char = LocalPlayer.Character
+    local blockers = {}
+
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                local blocked = true
+                local conn = tool.Activated:Connect(function()
+                    if blocked then return end
+                end)
+                table.insert(blockers, {
+                    conn = conn,
+                    release = function() blocked = false end,
+                })
+            end
+        end
+    end
+
+    task.wait(0.04 + math.random() * 0.02)
+    bypassV1DrawClickDot(x, y)
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    end)
+    task.wait(0.008 + math.random() * 0.008)
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+    end)
+
+    task.delay(0.05, function()
+        for _, blocker in ipairs(blockers) do
+            blocker.release()
+            pcall(function() blocker.conn:Disconnect() end)
+        end
+    end)
+end
+
+local function bypassV1DoBlock()
+    local target = getNearestPlayer()
+    if target then
+        pcall(bypassV1BlockPlayer, target)
+    end
+end
+
+local function bypassV1Reset()
+    BypassProtectV1.activeThread += 1
+    BypassProtectV1.blockTriggered = false
+    BypassProtectV1.wasStealing = false
+end
+
+local function bypassV1HookCharacter(char)
+    BypassProtectV1.currentCharacterId += 1
+    local characterId = BypassProtectV1.currentCharacterId
+    bypassV1Reset()
+
+    local humanoid = char:WaitForChild("Humanoid", 5)
+    if not humanoid then return end
+
+    table.insert(BypassProtectV1.characterConnections, humanoid.Died:Connect(function()
+        if characterId == BypassProtectV1.currentCharacterId then
+            bypassV1Reset()
+        end
+    end))
+
+    table.insert(BypassProtectV1.characterConnections, humanoid.AnimationPlayed:Connect(function(track)
+        if characterId ~= BypassProtectV1.currentCharacterId then return end
+        local animation = track.Animation
+        if not animation or not tostring(animation.AnimationId):find(BYPASS_V1_RESET_ANIMATION_ID) then return end
+
+        BypassProtectV1.resetAnimationPlaying = true
+        bypassV1Reset()
+        task.spawn(function()
+            while characterId == BypassProtectV1.currentCharacterId and track.IsPlaying do
+                task.wait()
+            end
+            if characterId == BypassProtectV1.currentCharacterId then
+                BypassProtectV1.resetAnimationPlaying = false
+            end
+        end)
+    end))
+end
+
+local function bypassV1Stop()
+    BypassProtectV1.activeThread += 1
+    BypassProtectV1.blockTriggered = false
+    BypassProtectV1.wasStealing = false
+    if BypassProtectV1.loop then
+        pcall(function() task.cancel(BypassProtectV1.loop) end)
+        BypassProtectV1.loop = nil
+    end
+end
+
+local function bypassV1Start()
+    bypassV1Stop()
+    if not BypassProtectV1.enabled then return end
+    BypassProtectV1.loop = task.spawn(function()
+        while BypassProtectV1.enabled and not thisScriptStopped do
+            local stealingNow = isStealing == true
+            if stealingNow and not BypassProtectV1.wasStealing then
+                BypassProtectV1.wasStealing = true
+                BypassProtectV1.blockTriggered = false
+                task.spawn(bypassV1DoBlock)
+            elseif not stealingNow then
+                BypassProtectV1.wasStealing = false
+                BypassProtectV1.blockTriggered = false
+            elseif not BypassProtectV1.blockTriggered and bypassV1IsWithinBlockRadius() then
+                BypassProtectV1.blockTriggered = true
+                task.spawn(bypassV1DoBlock)
+            end
+            task.wait()
+        end
+        BypassProtectV1.loop = nil
+    end)
+end
+
+function BypassProtectV1.set(enabled)
+    BypassProtectV1.enabled = enabled == true
+    _G.BypassProtectV1 = BypassProtectV1.enabled
+    if BypassProtectV1.enabled then
+        bypassV1Start()
+    else
+        bypassV1Stop()
+    end
+end
+
+function BypassProtectV1.isEnabled()
+    return BypassProtectV1.enabled
+end
+
+if LocalPlayer.Character then
+    task.spawn(bypassV1HookCharacter, LocalPlayer.Character)
+end
+table.insert(ActiveConnections, LocalPlayer.CharacterAdded:Connect(function(char)
+    BypassProtectV1.resetAnimationPlaying = false
+    task.spawn(bypassV1HookCharacter, char)
+end))
+table.insert(ActiveConnections, {
+    Disconnect = function()
+        BypassProtectV1.enabled = false
+        bypassV1Stop()
+        for _, conn in ipairs(BypassProtectV1.characterConnections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        BypassProtectV1.characterConnections = {}
+    end,
+})
+if _G.BypassProtectV1 then
+    task.defer(function() BypassProtectV1.set(true) end)
 end
 
 -- ==========================================
@@ -5369,6 +5595,34 @@ local function BuildHUB()
         return row, ref
     end
 
+    -- PANEL BYPASS PROTECT V1
+    -- Fica aberto junto do hub; não existe botão para esconder/mostrar.
+    do
+        local BPW = isMob and 250 or 270
+        local BPH = HEADER_H + 12 + 32 + 8
+        local BPX
+        local BPY
+        if isMob then
+            BPX = math.floor(screenW / 2 - BPW / 2)
+            BPY = math.floor(screenH * 0.22 + 195 + 14)
+        else
+            BPX = math.clamp(math.floor(screenW / 2 - BPW / 2 - 220), 10, math.max(10, screenW - BPW - 10))
+            BPY = math.floor(screenH * 0.07 - 25)
+        end
+
+        local bypassPanel, bypassContent = makePanel(
+            "BypassProtectV1Panel", "Bypass Protect V1",
+            BPX, BPY, BPW, BPH, 220, BPH
+        )
+        registerPanelLayout(bypassPanel, "BypassProtectV1Panel", 220, BPH)
+        bypassPanel.Visible = true
+
+        toggleRow(bypassContent, "Active Block", _G.BypassProtectV1, function(enabled)
+            BypassProtectV1.set(enabled)
+            saveSettings()
+        end)
+    end
+
     local function dropdownRow(parent, title, options, defaultValue, onSelect)
         sectionOrder += 1
         local row = Instance.new("Frame")
@@ -5826,6 +6080,7 @@ local function BuildHUB()
         SelectBestBrainrot = function() return _G.SelectBestBrainrot == true end,
         -- 🆕 PATCH
         BypassProtectV2    = function() return _G.BypassProtectV2 == true end,
+        BypassProtectV1    = function() return _G.BypassProtectV1 == true end,
         AutoReturnBase     = function() return _G.AutoReturnBase == true end,
     }
 
@@ -6804,6 +7059,7 @@ local function cleanup()
     UltraBooster.stop()
     hhStopAutoCarpet()
     stopAntiDie()
+    if BypassProtectV1 and BypassProtectV1.set then BypassProtectV1.set(false) end
     if _G.CloneESP and _G.CloneESP.set then _G.CloneESP.set(false) end
     if _G.AllowDisallowESP and _G.AllowDisallowESP.set then _G.AllowDisallowESP.set(false) end
     if _G.GameStretcher and _G.GameStretcher.set then _G.GameStretcher.set(false) end

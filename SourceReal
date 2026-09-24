@@ -436,17 +436,19 @@ local function stopFlashLagger()
 end
 
 -- ==========================================
--- FLASH SPEED (dynamic: 200 sem TP V2, 300 com)
+-- FLASH SPEED (dynamic: 200 sem TP V2, 500 com)
 -- ==========================================
+local FLASH_SPEED_MAX_BASE = 200
+local FLASH_SPEED_MAX_TPV2 = 500
 _G.FlashSpeed = _G.FlashSpeed or 150
 local function getFlashSpeed()
-    local maxV = _G.TPV2 and 300 or 200
+    local maxV = _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
     local v = _G.FlashSpeed or 150
     if v > maxV then v = maxV end
     return v
 end
 local function getMaxFlashSpeed()
-    return _G.TPV2 and 300 or 200
+    return _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
 end
 
 -- ==========================================
@@ -1647,7 +1649,7 @@ _G.FlashSpeed = savedSettings.FlashSpeed or 150
 _G.TPV2 = savedBool(savedSettings, "TPV2", false)
 -- clamp flash speed to current max
 do
-    local maxV = _G.TPV2 and 300 or 200
+    local maxV = _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
     if type(_G.FlashSpeed) ~= "number" or _G.FlashSpeed < 0 then _G.FlashSpeed = 150 end
     if _G.FlashSpeed > maxV then _G.FlashSpeed = maxV end
 end
@@ -3539,8 +3541,6 @@ end
 
 -- ==========================================
 -- BYPASS PROTECT V1
--- Integra a lógica da source V1 ao fluxo de steal existente.
--- A interface deste recurso é criada no BuildHUB e fica sempre visível.
 -- ==========================================
 local BypassProtectV1 = {
     enabled = false,
@@ -3553,7 +3553,7 @@ local BypassProtectV1 = {
     characterConnections = {},
 }
 
-local BYPASS_V1_BLOCK_RADIUS = 5
+local BYPASS_V1_BLOCK_RADIUS = 4
 local BYPASS_V1_RESET_ANIMATION_ID = "71186871415348"
 
 local function bypassV1GetHRP()
@@ -4321,8 +4321,8 @@ local function startTripToPetSlot(prompt, slotNumber)
     end
 
     local Speed = getFlashSpeed()
-    -- 🆕 TP V2: espaço de trigger maior
-    local grabStartDistance = _G.TPV2 and 110 or 70
+    -- 🆕 TP V2: trigger ampliado até 500; sem TP V2 permanece em 70
+    local grabStartDistance = _G.TPV2 and 500 or 70
     local grabStarted = false
     -- TP V2: usa o grapple uma vez antes de equipar o carpet para estabilizar o deslocamento.
     if _G.TPV2 then
@@ -6260,12 +6260,12 @@ local function BuildHUB()
         if not v then lastSeenTimers = {} end
         saveSettings()
     end)
-    -- 🆕 TP V2 toggle (libera speed 300 + jump + trigger extra)
+    -- 🆕 TP V2 toggle (libera speed 500 + jump + trigger extra)
     toggleRow(ScrollFlash, "TP V2", _G.TPV2, function(v)
         _G.TPV2 = v
         -- clamp speed when disabling
-        if not v and _G.FlashSpeed and _G.FlashSpeed > 200 then
-            _G.FlashSpeed = 200
+        if not v and _G.FlashSpeed and _G.FlashSpeed > FLASH_SPEED_MAX_BASE then
+            _G.FlashSpeed = FLASH_SPEED_MAX_BASE
         end
         if _refreshSpeedSlider then pcall(_refreshSpeedSlider) end
         saveSettings()
@@ -6348,7 +6348,7 @@ local function BuildHUB()
         end)
     end
 
-    -- FLASH SPEED slider (dinâmico: 200 base / 300 com TP V2)
+    -- FLASH SPEED slider (dinâmico: 0–200 base / 0–500 com TP V2)
     do
         sectionOrder += 1
         local speedLblRow = Instance.new("Frame")
@@ -6393,7 +6393,7 @@ local function BuildHUB()
         Instance.new("UICorner", speedFill).CornerRadius = UDim.new(1, 0)
 
         local function getMaxSpeedLocal()
-            return _G.TPV2 and 300 or 200
+            return _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
         end
 
         local function refreshSpeedSlider()

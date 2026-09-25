@@ -24,18 +24,9 @@ local cloneref = (type(cloneref) == "function" and cloneref)
     or function(instance) return instance end
 
 -- ==========================================
--- HIDDEN GUI (CoreGui / gethui) — 100%
+-- GUI PARENT (PlayerGui)
 -- ==========================================
-local function getHiddenGui()
-    if type(gethui) == "function" then
-        local ok, ui = pcall(gethui)
-        if ok and ui then return ui end
-    end
-    local ok, ui = pcall(function() return cloneref(CoreGui) end)
-    if ok and ui then return ui end
-    return CoreGui
-end
-local HIDDEN_GUI = getHiddenGui()
+local HIDDEN_GUI = PlayerGui
 
 local function protectGui(gui)
     if not gui then return end
@@ -49,18 +40,8 @@ local function protectGui(gui)
 end
 
 local function getGuiParent()
-    if type(gethui) == "function" then
-        local ok, ui = pcall(gethui)
-        if ok and ui then return ui end
-    end
-    local ok, ui = pcall(function() return cloneref(CoreGui) end)
-    if ok and ui then return ui end
     return PlayerGui
 end
-
-pcall(function()
-    if type(setfpscap) == "function" then setfpscap(9999) end
-end)
 
 local ActiveConnections = {}
 local thisScriptStopped = false
@@ -436,10 +417,10 @@ local function stopFlashLagger()
 end
 
 -- ==========================================
--- FLASH SPEED (dynamic: 200 sem TP V2, 500 com)
+-- FLASH SPEED (dynamic: 200 sem TP V2, 700 com)
 -- ==========================================
 local FLASH_SPEED_MAX_BASE = 200
-local FLASH_SPEED_MAX_TPV2 = 500
+local FLASH_SPEED_MAX_TPV2 = 700
 _G.FlashSpeed = _G.FlashSpeed or 150
 local function getFlashSpeed()
     local maxV = _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
@@ -1689,12 +1670,12 @@ _G.MineESPEnabled = savedBool(savedSettings, "MineESP", false)
 _G.MineESPColorName = "HighBlue"
 _G.MineESPColor = Color3.fromRGB(87, 177, 252)
 
-_G.AutoFlashLowTimer   = savedBool(savedSettings, "AutoFlashLowTimer", false)
-_G.AutoLaser           = savedBool(savedSettings, "AutoLaser", false)
-_G.SelectBestBrainrot  = savedBool(savedSettings, "SelectBestBrainrot", false)
 
-_G.BypassProtectV2     = savedBool(savedSettings, "BypassProtectV2", false)
 _G.BypassProtectV1     = savedBool(savedSettings, "BypassProtectV1", false)
+_G.BypassV1BlockRadius  = tonumber(savedSettings.BypassV1BlockRadius) or 4
+_G.BypassV1BlockDelay   = tonumber(savedSettings.BypassV1BlockDelay) or 0.04
+_G.BypassV1BlockEnabled  = savedBool(savedSettings, "BypassV1BlockEnabled", true)
+_G.BypassV1GrabEnabled   = savedBool(savedSettings, "BypassV1GrabEnabled", true)
 _G.AutoReturnBase      = savedBool(savedSettings, "AutoReturnBase", false)
 
 -- ==========================================
@@ -1731,7 +1712,6 @@ function AutoBalloon.set(on)
  end) end
 end
 _G.AutoBalloon=AutoBalloon
-_G.FpsBooster = savedSettings.FpsBooster == nil and true or savedSettings.FpsBooster
 _G.KorbloxLegEnabled = savedBool(savedSettings, "KorbloxLeg", false)
 KorbloxLeg.enabled = _G.KorbloxLegEnabled == true
 
@@ -1757,170 +1737,6 @@ local player = LocalPlayer
 local maxVelocity = 40
 local clampVelocity = 25
 local maxClamp = 15
-
-do
-    local laggerBypassRemote, laggerBypassLoop = nil, nil
-    local flashEquippedBypass, laggerBypassActive = false, false
-
-    local function findBlockRemote()
-        local names = {
-            "SetPlayerBlockList","UpdatePlayerBlockList","SetBlockList","UpdateBlockList",
-            "PlayerBlockList","BlockListUpdate","SetBlockedUsers","UpdateBlockedUsers",
-            "BlockPlayer","UnblockPlayer"
-        }
-        local function scan(folder)
-            if not folder then return nil end
-            for _, name in ipairs(names) do
-                local r = folder:FindFirstChild(name)
-                if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then return r end
-            end
-            for _, child in ipairs(folder:GetDescendants()) do
-                if (child:IsA("RemoteEvent") or child:IsA("RemoteFunction")) then
-                    local n = tostring(child.Name):lower()
-                    if n:find("block") or n:find("blocklist") then return child end
-                end
-            end
-            return nil
-        end
-        return scan(game:FindFirstChild("RobloxReplicatedStorage"))
-            or scan(ReplicatedStorage)
-            or scan(game:GetService("ReplicatedFirst"))
-    end
-
-    local function setIncomingLag(amount)
-        pcall(function() settings().Network.IncomingReplicationLag = amount or 0 end)
-    end
-
-    local function buildBlockPayload(power)
-        local blockedUsers = {}
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                table.insert(blockedUsers, player.UserId)
-            end
-        end
-        while #blockedUsers < 8 do
-            table.insert(blockedUsers, math.random(1e8, 2e9))
-        end
-        local main = { BlockedIds = blockedUsers, UserIds = blockedUsers }
-        local depth = math.clamp(math.floor((_G.LaggerPower or 80) / 1.5), 50, 250)
-        local nested = {{}}
-        local current = nested[1]
-        for _ = 1, depth do
-            local n = {}
-            table.insert(current, n)
-            current = n
-        end
-        local maxRep = math.clamp(math.floor((power or 80000) / 150), 80, 12000)
-        for _ = 1, maxRep do
-            table.insert(main, nested)
-        end
-        return main
-    end
-
-    local function stopLaggerBypass()
-        laggerBypassActive = false
-        if laggerBypassLoop then pcall(function() task.cancel(laggerBypassLoop) end); laggerBypassLoop = nil end
-        setIncomingLag(0)
-    end
-
-    local function startLaggerBypass(duration)
-        if not _G.BypassProtectV2 then return end
-        duration = duration or 2.5
-
-        if not laggerBypassRemote then
-            laggerBypassRemote = findBlockRemote()
-        end
-
-        -- V2: mais agressivo (spam rápido + lag alto + payload grande)
-        local powerMul = math.clamp((_G.LaggerPower or 80) / 20, 1.0, 5.0)
-        local strength = math.clamp((_G.LaggerPower or 80) / 18, 1.0, 6.0)
-        setIncomingLag(strength)
-        pcall(function() settings().Network.IncomingReplicationLag = strength end)
-        if laggerBypassActive then return end
-        laggerBypassActive = true
-        if laggerBypassLoop then pcall(function() task.cancel(laggerBypassLoop) end) end
-        laggerBypassLoop = task.spawn(function()
-            local power = 180000 + math.floor((_G.LaggerPower or 80) * 2500)
-            local startTime = tick()
-            local waitT = math.clamp(0.04 / powerMul, 0.02, 0.05)
-            while laggerBypassActive and _G.BypassProtectV2 and (tick() - startTime) < duration do
-                if laggerBypassRemote then
-                    local payload = buildBlockPayload(power)
-                    pcall(function()
-                        if laggerBypassRemote:IsA("RemoteEvent") then
-                            laggerBypassRemote:FireServer(payload)
-                            laggerBypassRemote:FireServer(payload)
-                        elseif laggerBypassRemote:IsA("RemoteFunction") then
-                            laggerBypassRemote:InvokeServer(payload)
-                        end
-                    end)
-                end
-                setIncomingLag(strength)
-                task.wait(waitT)
-            end
-            laggerBypassActive = false
-            laggerBypassLoop = nil
-            setIncomingLag(0)
-        end)
-    end
-
-    _G._HighStartLagger = startLaggerBypass
-    _G._HighStopLagger  = stopLaggerBypass
-
-    -- Watcher: ativa quando equipar Flash / Flash Teleport
-    local flashToolConnBypass, lastFlashToolBypass = nil, nil
-    local function hookFlashToolBypass(tool)
-        if not tool or not tool:IsA("Tool") then return end
-        local n = tool.Name:lower()
-        if not (n:find("flash") or n:find("teleport")) then return end
-        if lastFlashToolBypass == tool and flashToolConnBypass then return end
-        if flashToolConnBypass then pcall(function() flashToolConnBypass:Disconnect() end) end
-        lastFlashToolBypass = tool
-        flashToolConnBypass = tool.Activated:Connect(function()
-            if not _G.BypassProtectV2 then return end
-            task.spawn(function()
-                task.wait(0.15)
-                stopLaggerBypass()
-                flashEquippedBypass = false
-            end)
-        end)
-    end
-
-    task.spawn(function()
-        while not thisScriptStopped do
-            task.wait(0.1)
-            if not _G.BypassProtectV2 then
-                if laggerBypassActive then stopLaggerBypass() end
-                flashEquippedBypass = false
-                lastFlashToolBypass = nil
-            else
-                local char = LocalPlayer.Character
-                local equippedTool = nil
-                if char then
-                    for _, child in ipairs(char:GetChildren()) do
-                        if child:IsA("Tool") then
-                            local n = child.Name:lower()
-                            if n:find("flash") or n:find("teleport") then equippedTool = child break end
-                        end
-                    end
-                end
-                if equippedTool then
-                    hookFlashToolBypass(equippedTool)
-                    if not flashEquippedBypass then
-                        flashEquippedBypass = true
-                        startLaggerBypass(10)
-                    end
-                else
-                    if flashEquippedBypass then
-                        flashEquippedBypass = false
-                        stopLaggerBypass()
-                    end
-                end
-            end
-        end
-    end)
-end
-
 do
     local BASE_TARGET = Vector3.new(-350.8919, -6.6011, 108.6947)
     local BASE_SPEED = 22
@@ -2485,15 +2301,24 @@ _G.AllowDisallowESP = (function()
         if espParentGui and espParentGui.Parent then return espParentGui end
         local parent = HIDDEN_GUI
         if not parent then return nil end
-        local gui = parent:FindFirstChild("HighAllowDisallowESP")
+        local gui
+        for _, child in ipairs(parent:GetChildren()) do
+            if child:IsA("ScreenGui") and (child:GetAttribute("HighAllowDisallowESP") or child.Name == "HighAllowDisallowESP") then
+                gui = child
+                break
+            end
+        end
         if not gui then
             gui = Instance.new("ScreenGui")
-            gui.Name = "HighAllowDisallowESP"
+            gui.Name = "67"
+            gui:SetAttribute("HighAllowDisallowESP", true)
             gui.ResetOnSpawn = false
             gui.IgnoreGuiInset = true
             gui.DisplayOrder = 50
             gui.Parent = parent
         end
+        gui.Name = "67"
+        gui:SetAttribute("HighAllowDisallowESP", true)
         espParentGui = gui
         return gui
     end
@@ -3553,7 +3378,6 @@ local BypassProtectV1 = {
     characterConnections = {},
 }
 
-local BYPASS_V1_BLOCK_RADIUS = 4
 local BYPASS_V1_RESET_ANIMATION_ID = "71186871415348"
 
 local function bypassV1GetHRP()
@@ -3577,7 +3401,8 @@ local function bypassV1IsWithinBlockRadius()
                 for _, pod in ipairs(pods:GetChildren()) do
                     local base = pod:FindFirstChild("Base")
                     local spawn = base and base:FindFirstChild("Spawn")
-                    if spawn and (spawn.Position - hrp.Position).Magnitude <= BYPASS_V1_BLOCK_RADIUS then
+                    local radius = math.clamp(tonumber(_G.BypassV1BlockRadius) or 4, 1, 50)
+                    if spawn and (spawn.Position - hrp.Position).Magnitude <= radius then
                         return true
                     end
                 end
@@ -3631,7 +3456,8 @@ local function bypassV1BlockPlayer(targetPlayer)
         end
     end
 
-    task.wait(0.04 + math.random() * 0.02)
+    local blockDelay = math.clamp(tonumber(_G.BypassV1BlockDelay) or 0.04, 0, 4)
+    task.wait(blockDelay)
     bypassV1DrawClickDot(x, y)
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
@@ -3713,11 +3539,15 @@ local function bypassV1Start()
             if stealingNow and not BypassProtectV1.wasStealing then
                 BypassProtectV1.wasStealing = true
                 BypassProtectV1.blockTriggered = false
-                task.spawn(bypassV1DoBlock)
+                if _G.BypassV1GrabEnabled then
+                    task.spawn(bypassV1DoBlock)
+                end
             elseif not stealingNow then
                 BypassProtectV1.wasStealing = false
                 BypassProtectV1.blockTriggered = false
-            elseif not BypassProtectV1.blockTriggered and bypassV1IsWithinBlockRadius() then
+            elseif _G.BypassV1BlockEnabled
+                and not BypassProtectV1.blockTriggered
+                and bypassV1IsWithinBlockRadius() then
                 BypassProtectV1.blockTriggered = true
                 task.spawn(bypassV1DoBlock)
             end
@@ -3901,6 +3731,35 @@ local function isValidStealPrompt(prompt)
     return false
 end
 
+local function findFirstAvailableStealPrompt()
+    local plotsFolder = Workspace:FindFirstChild("Plots")
+    if not plotsFolder then return nil, nil end
+    local candidates = {}
+    for _, plot in ipairs(plotsFolder:GetChildren()) do
+        if plot:IsA("Model") and not isMyPlot(plot) then
+            local podiums = plot:FindFirstChild("AnimalPodiums")
+            if podiums then
+                for _, podium in ipairs(podiums:GetChildren()) do
+                    local slotNumber = tonumber(podium.Name:match("%d+")) or 1
+                    local base = podium:FindFirstChild("Base") or podium
+                    local spawnPoint = base:FindFirstChild("Spawn")
+                    local attachment = spawnPoint and spawnPoint:FindFirstChild("PromptAttachment")
+                    if attachment then
+                        for _, child in ipairs(attachment:GetChildren()) do
+                            if child:IsA("ProximityPrompt") and isValidStealPrompt(child) then
+                                table.insert(candidates, { prompt = child, slot = slotNumber })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(candidates, function(a, b) return a.slot < b.slot end)
+    local first = candidates[1]
+    return first and first.prompt or nil, first and first.slot or nil
+end
+
 local function firePromptConnections(prompt, signalName)
     if not getconnections then return end
     local connections = getconnections(prompt[signalName])
@@ -3956,219 +3815,6 @@ local PREBLOCK_DIST_BY_SLOT = {
     [24] = 6.6, [25] = 6.6, [26] = 6.6, [27] = 6.6,
 }
 
-local lastSeenTimers = {}
-
-task.spawn(function()
-    while true do
-        task.wait(0.08)
-        if thisScriptStopped then break end
-        if not _G.AutoFlashLowTimer then lastSeenTimers = {} continue end
-        if isStealing or autoStealEnabled then continue end
-        if not selectedPrompt or not selectedSlotNumber then continue end
-
-        local plotsFolder = Workspace:FindFirstChild("Plots")
-        if not plotsFolder then continue end
-
-        local anyActive = false
-
-        for _, plot in ipairs(plotsFolder:GetChildren()) do
-            if not plot:IsA("Model") then continue end
-            if isMyPlot(plot) then continue end
-
-            local purchases = plot:FindFirstChild("Purchases")
-            local plotBlock = purchases and purchases:FindFirstChild("PlotBlock")
-            local mainPart  = plotBlock and plotBlock:FindFirstChild("Main")
-            local bb        = mainPart and mainPart:FindFirstChild("BillboardGui")
-            local timeLabel = bb and bb:FindFirstChild("RemainingTime")
-
-            if timeLabel then
-                local text = timeLabel.Text
-                local seconds = nil
-                if typeof(text) == "string" then
-                    local m, s = text:match("(%d+):(%d+)")
-                    if m and s then
-                        seconds = tonumber(m) * 60 + tonumber(s)
-                    else
-                        local n = text:match("(%d+)")
-                        if n then seconds = tonumber(n) end
-                    end
-                end
-
-                if seconds then
-                    anyActive = true
-                    local key = plot.Name
-                    local prev = lastSeenTimers[key]
-
-                    if prev and prev > 1 and seconds <= 1 then
-                        task.spawn(function()
-                            if not isStealing and not autoStealEnabled then
-                                startTripToPetSlot(selectedPrompt, selectedSlotNumber)
-                            end
-                        end)
-                    end
-
-                    lastSeenTimers[key] = seconds
-                end
-            end
-        end
-
-        if not anyActive then lastSeenTimers = {} end
-    end
-end)
-
-local LaserState = { Active = {} }
-
-local function triggerLaserOnTarget(targetPlayer)
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-
-    local laserTool = nil
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") and t.Name == "Laser Cape" then laserTool = t break end
-        end
-    end
-    if not laserTool then
-        for _, t in ipairs(char:GetChildren()) do
-            if t:IsA("Tool") and t.Name == "Laser Cape" then laserTool = t break end
-        end
-    end
-    if not laserTool then return end
-    if laserTool.Parent ~= char then
-        pcall(function() hum:EquipTool(laserTool) end)
-        task.wait(0.1)
-    end
-    pcall(function() laserTool:Activate() end)
-end
-
-local function isHoldingBrainrot(char)
-    if not char then return false end
-    local handParts = {
-        char:FindFirstChild("RightHand"),
-        char:FindFirstChild("LeftHand"),
-        char:FindFirstChild("Right Arm"),
-        char:FindFirstChild("Left Arm"),
-    }
-    for _, hand in ipairs(handParts) do
-        if hand then
-            for _, child in ipairs(hand:GetChildren()) do
-                if child:IsA("Model") then return true end
-                if child:IsA("BasePart") and child.Name ~= hand.Name
-                   and child.Name ~= "RightHand" and child.Name ~= "LeftHand"
-                   and child.Name ~= "Right Arm" and child.Name ~= "Left Arm" then
-                    return true
-                end
-            end
-            for _, c in ipairs(hand:GetChildren()) do
-                if c:IsA("Weld") or c:IsA("WeldConstraint") or c:IsA("Motor6D") then
-                    local p0 = c.Part0
-                    local p1 = c.Part1
-                    if p1 and p1:IsDescendantOf(char) == false and p1.Parent ~= char then
-                        return true
-                    end
-                    if p0 and p0:IsDescendantOf(char) == false and p0.Parent ~= char then
-                        return true
-                    end
-                end
-            end
-        end
-    end
-    for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Model") and child.Name ~= "Accessories" then
-            local hum2 = child:FindFirstChildOfClass("Humanoid")
-            if not hum2 and child:FindFirstChildWhichIsA("BasePart") then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-task.spawn(function()
-    while not thisScriptStopped do
-        task.wait(0.15)
-        if not _G.AutoLaser then LaserState.Active = {} continue end
-
-        for _, p in pairs(Players:GetPlayers()) do
-            if p == LocalPlayer then continue end
-            local character = p.Character
-            if not character then
-                LaserState.Active[p.UserId] = nil
-                continue
-            end
-
-            local isStealingPlayer = p:GetAttribute("StealingPlayer") == true
-            local holdingInHand = false
-            if not isStealingPlayer then
-                holdingInHand = isHoldingBrainrot(character)
-            end
-
-            if not isStealingPlayer and not holdingInHand then
-                LaserState.Active[p.UserId] = nil
-                continue
-            end
-
-            if not LaserState.Active[p.UserId] then
-                LaserState.Active[p.UserId] = true
-                triggerLaserOnTarget(p)
-            else
-                if math.random() < 0.15 then
-                    triggerLaserOnTarget(p)
-                end
-            end
-        end
-    end
-end)
-
-Players.PlayerRemoving:Connect(function(p) LaserState.Active[p.UserId] = nil end)
-
-local function findBestBrainrot()
-    local bestPet, bestSlot = nil, -1
-    local plotsFolder = Workspace:FindFirstChild("Plots")
-    if not plotsFolder then return nil end
-    for _, plot in ipairs(plotsFolder:GetChildren()) do
-        if plot:IsA("Model") and not isMyPlot(plot) then
-            local podiums = plot:FindFirstChild("AnimalPodiums")
-            if podiums then
-                for _, podium in ipairs(podiums:GetChildren()) do
-                    local slotNumber = tonumber(podium.Name:match("%d+")) or 1
-                    local base       = podium:FindFirstChild("Base") or podium
-                    local spawnPoint = base:FindFirstChild("Spawn")
-                    local attachment = spawnPoint and spawnPoint:FindFirstChild("PromptAttachment")
-                    if attachment then
-                        for _, child in ipairs(attachment:GetChildren()) do
-                            if child:IsA("ProximityPrompt") and isValidStealPrompt(child) then
-                                if slotNumber > bestSlot then
-                                    bestSlot = slotNumber
-                                    bestPet  = { prompt = child, slot = slotNumber,
-                                                 name = child.ObjectText or "Pet" }
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return bestPet
-end
-
-task.spawn(function()
-    while not thisScriptStopped do
-        task.wait(0.5)
-        if not _G.SelectBestBrainrot then continue end
-        if isStealing or autoStealEnabled then continue end
-        local best = findBestBrainrot()
-        if best and best.prompt ~= selectedPrompt then
-            selectedPrompt     = best.prompt
-            selectedSlotNumber = best.slot
-            if updatePetList then pcall(updatePetList) end
-        end
-    end
-end)
 
 local function _getAdminCmdTextBox()
     local ok, tb = pcall(function()
@@ -4352,6 +3998,7 @@ local function startTripToPetSlot(prompt, slotNumber)
     Velocity.Parent = Root
     local currentPosIndex = 1
     local intermediatePauseActive = false
+    local earlyBlockDone = false
     local savedWalkSpeed = Humanoid.WalkSpeed
     local savedJumpPower = Humanoid.JumpPower
     Humanoid.WalkSpeed = 0
@@ -4408,6 +4055,22 @@ local function startTripToPetSlot(prompt, slotNumber)
             Attachment:Destroy()
             Root.CFrame = CFrame.new(TargetPosition)
             if currentMovement then pcall(function() currentMovement:Disconnect() end) currentMovement = nil end
+            if _G.AutoBlock and _G.BlockMode == "veryfast" and not earlyBlockDone then
+                earlyBlockDone = true
+                local blockDelay
+                if slotNumber >= 19 and slotNumber <= 23 then
+                    blockDelay = 0.065
+                elseif slotNumber >= 11 and slotNumber <= 15 then
+                    blockDelay = 0.14
+                else
+                    blockDelay = 0.2
+                end
+                task.spawn(function()
+                    task.wait(blockDelay)
+                    local target = getNearestPlayer()
+                    if target then blockPlayer(target) end
+                end)
+            end
             task.wait(0.12)
             Camera.CameraType = Enum.CameraType.Scriptable
             if config.FixedCFrame then
@@ -4423,6 +4086,13 @@ local function startTripToPetSlot(prompt, slotNumber)
             end
             local flash = findTool("flash")
             if flash then
+                if _G.AutoBlock and _G.BlockMode == "veryfast" and not earlyBlockDone then
+                    earlyBlockDone = true
+                    task.spawn(function()
+                        local target = getNearestPlayer()
+                        if target then blockPlayer(target) end
+                    end)
+                end
                 Humanoid:EquipTool(flash)
                 task.wait(0.08)
                 flash:Activate()
@@ -4451,13 +4121,14 @@ local function startTripToPetSlot(prompt, slotNumber)
             Camera.CameraType = Enum.CameraType.Custom
             if _G.AutoBlock then
                 local mode = _G.BlockMode or "normal"
-                task.spawn(function()
-                    if mode == "normal" then task.wait(0.13)
-                    elseif mode == "fast" then task.wait(0.08)
-                    else task.wait(0.08) end
-                    local target = getNearestPlayer()
-                    if target then blockPlayer(target) end
-                end)
+                if mode ~= "veryfast" then
+                    task.spawn(function()
+                        if mode == "normal" then task.wait(0.13)
+                        elseif mode == "fast" then task.wait(0.08) end
+                        local target = getNearestPlayer()
+                        if target then blockPlayer(target) end
+                    end)
+                end
             end
             Humanoid.WalkSpeed = savedWalkSpeed
             Humanoid.JumpPower = savedJumpPower
@@ -4688,128 +4359,6 @@ task.spawn(function()
     end
 end)
 
--- ==========================================
--- FPS BOOSTER
--- ==========================================
-local UltraBooster = { running = false, conn = nil, gcLoop = nil }
-local function safeDestroy(obj)
-    if not obj or obj.Parent == nil then return end
-    local name = obj.Name
-    local parent = obj.Parent
-    if name:find("DO_NOT_REMOVE") or name:find("ForgeTextureCache") or name == "ChargeSoundPart"
-        or name == "XiProxAPRing" or name == "MynxxVizPath" or name == "MynxxTempPlatform"
-        or name == "MynxxClonePlatform" or name == "XiTempPlatform" then return end
-    if name:lower():find("craftingmachine") or name:lower():find("forge") then return end
-    while parent and parent ~= Workspace do
-        local pn = parent.Name
-        if pn:find("CraftingMachine") or pn:find("Forge") or pn:find("Crafting") then return end
-        parent = parent.Parent
-    end
-    pcall(function() obj:Destroy() end)
-end
-local function cleanObject(obj)
-    if not obj or obj.Parent == nil then return end
-    if obj:IsA("SurfaceAppearance") or obj:IsA("Decal") or obj:IsA("Texture") then
-        safeDestroy(obj)
-    elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or
-        obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
-        obj.Enabled = false
-        safeDestroy(obj)
-    elseif obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight") then
-        safeDestroy(obj)
-    elseif obj:IsA("BasePart") then
-        obj.CastShadow = false
-        obj.Material = Enum.Material.Plastic
-        obj.Reflectance = 0
-    elseif obj:IsA("SpecialMesh") or obj:IsA("BlockMesh") or obj:IsA("CylinderMesh") then
-        obj.TextureId = ""
-    end
-end
-local function optimizeLighting()
-    local Lighting = game:GetService("Lighting")
-    Lighting.Brightness = 2.5
-    Lighting.Ambient = Color3.fromRGB(80, 80, 80)
-    Lighting.GlobalShadows = false
-    Lighting.FogEnd = 9e9
-    Lighting.FogStart = 9e9
-    Lighting.EnvironmentDiffuseScale = 0
-    Lighting.EnvironmentSpecularScale = 0
-    for _, v in ipairs(Lighting:GetChildren()) do
-        if v:IsA("PostEffect") then v.Enabled = false
-        elseif v:IsA("Atmosphere") or v:IsA("Clouds") then safeDestroy(v) end
-    end
-    local sky = Lighting:FindFirstChildWhichIsA("Sky")
-    if not sky then sky = Instance.new("Sky") sky.Parent = Lighting end
-    sky.SkyboxBk = "" sky.SkyboxDn = "" sky.SkyboxFt = ""
-    sky.SkyboxLf = "" sky.SkyboxRt = "" sky.SkyboxUp = ""
-    sky.CelestialBodiesShown = false
-    sky.StarCount = 0
-    Lighting.ColorShift_Top = Color3.fromRGB(128, 128, 128)
-    Lighting.ColorShift_Bottom = Color3.fromRGB(128, 128, 128)
-    Lighting.FogColor = Color3.fromRGB(128, 128, 128)
-    Lighting.ClockTime = 12
-end
-local function applyTerrain()
-    local terrain = workspace:FindFirstChildWhichIsA("Terrain")
-    if terrain then
-        pcall(function()
-            terrain.Decoration = false
-            terrain.WaterWaveSize = 0
-            terrain.WaveSpeed = 0
-            terrain.WaterReflectance = 0
-            terrain.WaterTransparency = 1
-        end)
-    end
-end
-local function optimizeAll()
-    local Lighting = game:GetService("Lighting")
-    pcall(function()
-        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
-        settings().Physics.AllowSleep = true
-    end)
-    pcall(function()
-        settings().Physics.PhysicsEnvironmentalThrottle = Enum.EnviromentalPhysicsThrottle.Skip
-    end)
-    pcall(function()
-        if sethiddenproperty then
-            sethiddenproperty(Lighting, "Technology", Enum.Technology.Compatibility)
-        end
-    end)
-    optimizeLighting()
-    applyTerrain()
-    local allDesc = Workspace:GetDescendants()
-    for i = 1, #allDesc do
-        local obj = allDesc[i]
-        if obj and obj.Parent then cleanObject(obj) end
-        if i % 200 == 0 then task.wait() end
-    end
-end
-function UltraBooster.start()
-    if UltraBooster.running then return end
-    UltraBooster.running = true
-    optimizeAll()
-    pcall(function() if setfpscap then setfpscap(1000) end end)
-    UltraBooster.conn = Workspace.DescendantAdded:Connect(function(obj)
-        if UltraBooster.running then cleanObject(obj) end
-    end)
-    UltraBooster.gcLoop = task.spawn(function()
-        while UltraBooster.running do
-            task.wait(15)
-            pcall(collectgarbage, "collect")
-        end
-    end)
-end
-function UltraBooster.stop()
-    if not UltraBooster.running then return end
-    UltraBooster.running = false
-    if UltraBooster.conn then UltraBooster.conn:Disconnect() UltraBooster.conn = nil end
-    if UltraBooster.gcLoop then pcall(task.cancel, UltraBooster.gcLoop) UltraBooster.gcLoop = nil end
-end
-
--- ==========================================
--- AP ESP + BACKPACK ESP
--- ==========================================
 local apEspInstances = {}
 local function clearAPESP()
     for uid, bb in pairs(apEspInstances) do
@@ -5038,7 +4587,7 @@ local function BuildHUB()
 
     local guiLocked = false
     local lockBtn = Instance.new("TextButton")
-    lockBtn.Name = "67"
+    lockBtn.Name = "LockButton"
     lockBtn.Size = UDim2.new(0, 32, 0, 32)
     lockBtn.Position = UDim2.new(0, 8, 0, 8)
     lockBtn.BackgroundColor3 = C.card
@@ -5158,7 +4707,7 @@ local function BuildHUB()
 
     local function makePanel(name, titleText, px, py, pw, ph, minW, minH)
         local panel = Instance.new("Frame")
-        panel.Name = "67"
+        panel.Name = name
         panel.Size = UDim2.new(0, pw, 0, ph)
         panel.Position = UDim2.new(0, px, 0, py)
         panel.BackgroundColor3 = C.body
@@ -5746,10 +5295,10 @@ local function BuildHUB()
     end
 
     -- PANEL BYPASS PROTECT V1
-    -- Fica aberto junto do hub; não existe botão para esconder/mostrar.
     do
         local BPW = isMob and 250 or 270
         local BPH = HEADER_H + 12 + 32 + 8
+        local BSH = HEADER_H + 12 + (32 * 4) + (8 * 3) + 8
         local BPX
         local BPY
         if isMob then
@@ -5760,17 +5309,138 @@ local function BuildHUB()
             BPY = math.floor(screenH * 0.07 - 25)
         end
 
-        local bypassPanel, bypassContent = makePanel(
+        local bypassPanel, bypassContent, bypassHeader = makePanel(
             "BypassProtectV1Panel", "Bypass Protect V1",
             BPX, BPY, BPW, BPH, 220, BPH
         )
         registerPanelLayout(bypassPanel, "BypassProtectV1Panel", 220, BPH)
         bypassPanel.Visible = true
 
+        local settingsX = isMob and BPX or math.clamp(BPX + BPW + 10, 10, math.max(10, screenW - BPW - 10))
+        local settingsY = isMob and (BPY + BPH + 8) or BPY
+        local settingsPanel, settingsContent = makePanel(
+            "BypassProtectV1SettingsPanel", "Bypass V1 Settings",
+            settingsX, settingsY, BPW, BSH, 220, BSH
+        )
+        registerPanelLayout(settingsPanel, "BypassProtectV1SettingsPanel", 220, BSH)
+        settingsPanel.Visible = false
+
+        local bypassLayout = Instance.new("UIListLayout")
+        bypassLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        bypassLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        bypassLayout.Padding = UDim.new(0, 8)
+        bypassLayout.Parent = bypassContent
+        local settingsLayout = Instance.new("UIListLayout")
+        settingsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        settingsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        settingsLayout.Padding = UDim.new(0, 8)
+        settingsLayout.Parent = settingsContent
+
+        local settingsToggle = Instance.new("TextButton")
+        settingsToggle.Name = "SettingsToggle"
+        settingsToggle.Size = UDim2.new(0, 28, 0, 24)
+        settingsToggle.Position = UDim2.new(1, -36, 0.5, -12)
+        settingsToggle.BackgroundColor3 = C.card
+        settingsToggle.BackgroundTransparency = 0.25
+        settingsToggle.BorderSizePixel = 0
+        settingsToggle.Text = "+"
+        settingsToggle.TextColor3 = C.accent
+        settingsToggle.TextSize = 18
+        settingsToggle.Font = Enum.Font.GothamBold
+        settingsToggle.AutoButtonColor = false
+        settingsToggle.ZIndex = 12
+        settingsToggle.Parent = bypassHeader
+        Instance.new("UICorner", settingsToggle).CornerRadius = UDim.new(0, 6)
+        settingsToggle.MouseButton1Click:Connect(function()
+            local open = not settingsPanel.Visible
+            settingsPanel.Visible = open
+            settingsToggle.Text = open and "−" or "+"
+        end)
+
         toggleRow(bypassContent, "Active Block", _G.BypassProtectV1, function(enabled)
             BypassProtectV1.set(enabled)
             saveSettings()
         end)
+
+        toggleRow(settingsContent, "Block", _G.BypassV1BlockEnabled, function(enabled)
+            _G.BypassV1BlockEnabled = enabled
+            saveSettings()
+        end)
+        toggleRow(settingsContent, "Grab", _G.BypassV1GrabEnabled, function(enabled)
+            _G.BypassV1GrabEnabled = enabled
+            saveSettings()
+        end)
+
+        local settingsRowOrder = 1000
+        local function bypassV1AdjustRow(title, getter, setter, minValue, maxValue, step, formatter)
+            settingsRowOrder += 1
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(0.92, 0, 0, 32)
+            row.AnchorPoint = Vector2.new(0.5, 0)
+            row.BackgroundColor3 = C.card
+            row.BackgroundTransparency = 0.6
+            row.BorderSizePixel = 0
+            row.LayoutOrder = settingsRowOrder
+            row.Parent = settingsContent
+            Instance.new("UICorner", row).CornerRadius = UDim.new(1, 0)
+            local stroke = Instance.new("UIStroke", row)
+            stroke.Color = C.strokeDim
+            stroke.Transparency = 0.35
+
+            local label = Instance.new("TextLabel", row)
+            label.Size = UDim2.new(1, -112, 1, 0)
+            label.Position = UDim2.new(0, 10, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Text = title
+            label.TextColor3 = C.textBright
+            label.TextSize = 11
+            label.Font = Enum.Font.GothamMedium
+            label.TextXAlignment = Enum.TextXAlignment.Left
+
+            local value = Instance.new("TextLabel", row)
+            value.Size = UDim2.new(0, 52, 1, 0)
+            value.Position = UDim2.new(1, -82, 0, 0)
+            value.BackgroundTransparency = 1
+            value.TextColor3 = C.accent
+            value.TextSize = 11
+            value.Font = Enum.Font.GothamBold
+            value.TextXAlignment = Enum.TextXAlignment.Center
+
+            local function refresh()
+                value.Text = formatter(getter())
+            end
+            local function change(delta)
+                local nextValue = math.clamp((tonumber(getter()) or minValue) + delta, minValue, maxValue)
+                nextValue = math.floor(nextValue / step + 0.5) * step
+                setter(nextValue)
+                refresh()
+                saveSettings()
+            end
+            local function button(text, x, callback)
+                local btn = Instance.new("TextButton", row)
+                btn.Size = UDim2.new(0, 24, 0, 24)
+                btn.Position = UDim2.new(1, x, 0.5, -12)
+                btn.BackgroundColor3 = C.iconBg
+                btn.BorderSizePixel = 0
+                btn.Text = text
+                btn.TextColor3 = C.textBright
+                btn.TextSize = 14
+                btn.Font = Enum.Font.GothamBold
+                btn.AutoButtonColor = false
+                Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
+                btn.MouseButton1Click:Connect(callback)
+            end
+            button("−", -108, function() change(-step) end)
+            button("+", -28, function() change(step) end)
+            refresh()
+        end
+
+        bypassV1AdjustRow("Block Delay", function() return _G.BypassV1BlockDelay end,
+            function(v) _G.BypassV1BlockDelay = v end, 0, 4, 0.01,
+            function(v) return string.format("%.2fs", v) end)
+        bypassV1AdjustRow("Block Radius", function() return _G.BypassV1BlockRadius end,
+            function(v) _G.BypassV1BlockRadius = v end, 1, 50, 1,
+            function(v) return string.format("%.0f", v) end)
     end
 
     local function dropdownRow(parent, title, options, defaultValue, onSelect)
@@ -6190,6 +5860,10 @@ local function BuildHUB()
         AutoGiant = function() return _G.AutoGiant end,
         AutoBlock = function() return _G.AutoBlock end,
         BlockMode = function() return _G.BlockMode end,
+        BypassV1BlockDelay = function() return _G.BypassV1BlockDelay or 0.04 end,
+        BypassV1BlockRadius = function() return _G.BypassV1BlockRadius or 4 end,
+        BypassV1BlockEnabled = function() return _G.BypassV1BlockEnabled == true end,
+        BypassV1GrabEnabled = function() return _G.BypassV1GrabEnabled == true end,
         AntiRagdoll = function() return _G.AntiRagdoll == true end,
         AutoResetTiny = function() return _G.AutoResetTiny end,
         AutoResetJail = function() return _G.AutoResetJail end,
@@ -6214,7 +5888,6 @@ local function BuildHUB()
         AntiDie = function() return _G.AntiDie or false end,
         AutoBalloon = function() return _G.AutoBalloonEnabled == true end,
         SelectedFont = function() return _G.SelectedFont or "Gotham Bold" end,
-        FpsBooster = function() return _G.FpsBooster == true end,
         KorbloxLeg = function() return _G.KorbloxLegEnabled == true end,
         CloneESP = function() return _G.CloneESPEnabled == true end,
         AllowDisallowESP = function() return _G.AllowDisallowESPEnabled == true end,
@@ -6226,11 +5899,6 @@ local function BuildHUB()
         HideAdminPanel = function() return _G.HideAdminPanel == true end,
         LineToBase = function() return _G.LineToBase == true end,
         MineESP = function() return _G.MineESPEnabled == true end,
-        AutoFlashLowTimer  = function() return _G.AutoFlashLowTimer or false end,
-        AutoLaser          = function() return _G.AutoLaser == true end,
-        SelectBestBrainrot = function() return _G.SelectBestBrainrot == true end,
-        -- 🆕 PATCH
-        BypassProtectV2    = function() return _G.BypassProtectV2 == true end,
         BypassProtectV1    = function() return _G.BypassProtectV1 == true end,
         AutoReturnBase     = function() return _G.AutoReturnBase == true end,
     }
@@ -6255,12 +5923,7 @@ local function BuildHUB()
 
     sectionHeader(ScrollFlash, "  FLASH TP  ")
     toggleRow(ScrollFlash, "Auto Flash TP On Reset", _G.AutoFlashTP, function(v) _G.AutoFlashTP = v end)
-    toggleRow(ScrollFlash, "Flash TP On Low Timer", _G.AutoFlashLowTimer, function(v)
-        _G.AutoFlashLowTimer = v
-        if not v then lastSeenTimers = {} end
-        saveSettings()
-    end)
-    -- 🆕 TP V2 toggle (libera speed 500 + jump + trigger extra)
+    -- 🆕 TP V2 toggle (libera speed 700 + jump + trigger extra)
     toggleRow(ScrollFlash, "TP V2", _G.TPV2, function(v)
         _G.TPV2 = v
         -- clamp speed when disabling
@@ -6348,7 +6011,7 @@ local function BuildHUB()
         end)
     end
 
-    -- FLASH SPEED slider (dinâmico: 0–200 base / 0–500 com TP V2)
+    -- FLASH SPEED slider (dinâmico: 0–200 base / 0–700 com TP V2)
     do
         sectionOrder += 1
         local speedLblRow = Instance.new("Frame")
@@ -6433,17 +6096,16 @@ local function BuildHUB()
         end)
     end
 
-    toggleRow(ScrollFlash, "Bypass Protect V2", _G.BypassProtectV2, function(v)
-        _G.BypassProtectV2 = v
-        if not v and _G._HighStopLagger then pcall(_G._HighStopLagger) end
-        saveSettings()
-    end)
 
     sectionHeader(ScrollBlock, "  BLOCK  ")
     toggleRow(ScrollBlock, "Auto Block", _G.AutoBlock, function(v) _G.AutoBlock = v end)
 
     do
-        local modes = { {key="normal", label="NORMAL"}, {key="fast", label="FAST"} }
+        local modes = {
+            {key="normal", label="NORMAL"},
+            {key="fast", label="FAST"},
+            {key="veryfast", label="VERY FAST"},
+        }
         local modeButtons = {}
         local function refreshModeButtons()
             for _, info in ipairs(modes) do
@@ -6577,15 +6239,6 @@ local function BuildHUB()
         saveSettings()
     end)
 
-    toggleRow(ScrollMisc, "Auto Capa Lazer", _G.AutoLaser, function(v)
-        _G.AutoLaser = v
-        if not v then LaserState.Active = {} end
-        saveSettings()
-    end)
-    toggleRow(ScrollMisc, "Select Best Brainrot", _G.SelectBestBrainrot, function(v)
-        _G.SelectBestBrainrot = v
-        saveSettings()
-    end)
 
     sectionHeader(ScrollMisc, "  FONTS  ")
     do
@@ -6729,11 +6382,6 @@ local function BuildHUB()
     end)
 
     sectionHeader(ScrollVisual, "  VISUAL  ")
-    toggleRow(ScrollVisual, "Fps Booster", _G.FpsBooster, function(v)
-        _G.FpsBooster = v
-        if v then UltraBooster.start() else UltraBooster.stop() end
-        saveSettings()
-    end)
 
     do
         sectionOrder += 1
@@ -6918,6 +6566,9 @@ local function BuildHUB()
     end
 
     FLASHTP.MouseButton1Click:Connect(function()
+        if not selectedPrompt or not selectedSlotNumber then
+            selectedPrompt, selectedSlotNumber = findFirstAvailableStealPrompt()
+        end
         if selectedPrompt and selectedSlotNumber then
             if not isStealing and not autoStealEnabled then
                 flashBar(flashAccent)
@@ -6970,6 +6621,9 @@ local function BuildHUB()
         if listeningAction then return end
         if justBound then return end
         if inp.KeyCode == keybinds.flash then
+            if not selectedPrompt or not selectedSlotNumber then
+                selectedPrompt, selectedSlotNumber = findFirstAvailableStealPrompt()
+            end
             if selectedPrompt and selectedSlotNumber and not isStealing and not autoStealEnabled then
                 startTripToPetSlot(selectedPrompt, selectedSlotNumber)
             end
@@ -7155,6 +6809,8 @@ BuildHUB()
 -- ==========================================
 -- FPS + PING OVERLAY (drag / F8 hide-show)
 -- ==========================================
+local destroyCharacterDiscordBillboard = function() end
+
 do
     local BannerC = {
         body = Color3.fromRGB(10, 15, 25),
@@ -7162,27 +6818,35 @@ do
         textBright = Color3.fromRGB(235, 244, 255),
         accent = Color3.fromRGB(87, 177, 252),
     }
+    local function destroyOldBanner(parent)
+        if not parent then return end
+        for _, child in ipairs(parent:GetChildren()) do
+            if child.Name == "HighBanner" or (child.Name == "67" and child:GetAttribute("HighBanner")) then
+                child:Destroy()
+            end
+        end
+    end
     if HIDDEN_GUI then
-        local old = HIDDEN_GUI:FindFirstChild("HighBanner")
-        if old then old:Destroy() end
+        destroyOldBanner(HIDDEN_GUI)
     end
     if PlayerGui then
-        local oldPg = PlayerGui:FindFirstChild("HighBanner")
-        if oldPg then oldPg:Destroy() end
+        destroyOldBanner(PlayerGui)
     end
-    if PlayerGui then
+    local guiParent = getGuiParent()
+    if guiParent then
         local gui = Instance.new("ScreenGui")
-        gui.Name = "HighBanner"
+        gui.Name = "67"
+        gui:SetAttribute("HighBanner", true)
         gui.ResetOnSpawn = false
         gui.IgnoreGuiInset = true
         gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         gui.Enabled = true
         gui.DisplayOrder = 100
-        gui.Parent = PlayerGui
+        gui.Parent = guiParent
         local root = Instance.new("Frame")
         root.Name = "Root"
         root.Position = UDim2.fromOffset(18, 38)
-        root.Size = UDim2.fromOffset(292, 58)
+        root.Size = UDim2.fromOffset(292, 38)
         root.BackgroundColor3 = BannerC.body
         root.BackgroundTransparency = 0.08
         root.BorderSizePixel = 0
@@ -7195,7 +6859,7 @@ do
         local logo = Instance.new("TextLabel", root)
         logo.BackgroundTransparency = 1
         logo.Position = UDim2.fromOffset(12, 0)
-        logo.Size = UDim2.fromOffset(31, 58)
+        logo.Size = UDim2.fromOffset(31, 38)
         logo.Font = Enum.Font.GothamBold
         logo.Text = "H"
         -- 🆕 cor do H igual às demais (branco/cinza claro)
@@ -7204,24 +6868,14 @@ do
         local info = Instance.new("TextLabel", root)
         info.BackgroundTransparency = 1
         info.Position = UDim2.fromOffset(48, 0)
-        info.Size = UDim2.new(1, -58, 0, 30)
+        info.Size = UDim2.new(1, -58, 0, 38)
         info.Font = Enum.Font.GothamSemibold
         info.Text = "High  |   0 FPS  |  0 ms"
         info.TextColor3 = BannerC.textBright
         info.TextSize = 13
         info.TextXAlignment = Enum.TextXAlignment.Left
-        local discord = Instance.new("TextLabel", root)
-        discord.Name = "Discord"
-        discord.BackgroundTransparency = 1
-        discord.Position = UDim2.fromOffset(48, 31)
-        discord.Size = UDim2.new(1, -58, 0, 18)
-        discord.Font = Enum.Font.GothamBold
-        discord.Text = "discord.gg/SDXUMCrUcM"
-        discord.TextColor3 = BannerC.accent
-        discord.TextSize = 11
-        discord.TextXAlignment = Enum.TextXAlignment.Left
         local bannerGradients = {}
-        for _, label in ipairs({logo, info, discord}) do
+        for _, label in ipairs({logo, info}) do
             local gradient = Instance.new("UIGradient")
             gradient.Color = ColorSequence.new({
                 ColorSequenceKeypoint.new(0, BannerC.textBright),
@@ -7257,6 +6911,65 @@ do
                 task.wait(0.5)
             end
         end)
+
+        local characterDiscordBillboard
+        destroyCharacterDiscordBillboard = function()
+            if characterDiscordBillboard then
+                pcall(function() characterDiscordBillboard:Destroy() end)
+                characterDiscordBillboard = nil
+            end
+        end
+
+        local function addDiscordAboveCharacter(character)
+            destroyCharacterDiscordBillboard()
+            if thisScriptStopped or not character or not character.Parent then return end
+
+            local head = character:FindFirstChild("Head")
+            if not head then
+                head = character:WaitForChild("Head", 5)
+            end
+            if thisScriptStopped or not head or not head.Parent then return end
+
+            local previous = head:FindFirstChild("HighDiscordAboveCharacter")
+            if previous then previous:Destroy() end
+
+            local billboard = Instance.new("BillboardGui")
+            billboard.Name = "HighDiscordAboveCharacter"
+            billboard.Adornee = head
+            billboard.Size = UDim2.fromOffset(220, 24)
+            billboard.StudsOffset = Vector3.new(0, 2.6, 0)
+            billboard.AlwaysOnTop = true
+            billboard.LightInfluence = 0
+            billboard.MaxDistance = 1000
+            billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            billboard.Parent = head
+
+            local label = Instance.new("TextLabel")
+            label.Name = "Discord"
+            label.BackgroundTransparency = 1
+            label.Size = UDim2.fromScale(1, 1)
+            label.Font = Enum.Font.GothamBold
+            label.Text = "discord.gg/SDXUMCrUcM"
+            label.TextColor3 = BannerC.accent
+            label.TextSize = 13
+            label.TextStrokeColor3 = Color3.fromRGB(5, 8, 14)
+            label.TextStrokeTransparency = 0.35
+            label.TextXAlignment = Enum.TextXAlignment.Center
+            label.Parent = billboard
+
+            characterDiscordBillboard = billboard
+        end
+
+        table.insert(ActiveConnections, LocalPlayer.CharacterAdded:Connect(function(character)
+            task.defer(function()
+                task.wait(0.15)
+                addDiscordAboveCharacter(character)
+            end)
+        end))
+        if LocalPlayer.Character then
+            task.defer(addDiscordAboveCharacter, LocalPlayer.Character)
+        end
+
         local dragging, dragStart, startPos = false, nil, nil
         root.InputBegan:Connect(function(input)
             if _G.HighHubUILocked then return end
@@ -7296,11 +7009,7 @@ task.defer(function()
         if _G.AutoTurretEnabled and _G.AutoTurret and _G.AutoTurret.set then _G.AutoTurret.set(true) end
         if _G.GummyBypassEnabled and _G.GummyBypass and _G.GummyBypass.set then _G.GummyBypass.set(true) end
         if _G.AntiAdminEnabled and _G.AntiAdmin and _G.AntiAdmin.set then _G.AntiAdmin.set(true) end
-        if _G.FpsBooster then UltraBooster.start() end
         if _G.KorbloxLegEnabled then KorbloxLeg.set(true) end
-        -- 🆕 PATCH: os watchers de Bypass Protect V2 / Auto Return Base
-        -- já checam _G.BypassProtectV2 / _G.AutoReturnBase a cada tick,
-        -- então não é necessário boot explícito aqui.
     end)
 end)
 
@@ -7314,7 +7023,6 @@ local function cleanup()
     end
     ActiveConnections = {}
     stopFlashLagger()
-    if _G._HighStopLagger then pcall(_G._HighStopLagger) end
     if _G._HighStopReturnBase then pcall(_G._HighStopReturnBase) end
     if _G.AutoBalloon then _G.AutoBalloon.set(false) end
     stopAutoResetTiny()
@@ -7323,7 +7031,6 @@ local function cleanup()
     clearBackpackESP()
     clearAPESP()
     clearPlayerESP()
-    UltraBooster.stop()
     KorbloxLeg.set(false)
     hhStopAutoCarpet()
     stopAntiDie()
@@ -7335,6 +7042,7 @@ local function cleanup()
     if _G.AutoTurret and _G.AutoTurret.set then _G.AutoTurret.set(false) end
     if _G.GummyBypass and _G.GummyBypass.set then _G.GummyBypass.set(false) end
     if _G.AntiAdmin and _G.AntiAdmin.set then _G.AntiAdmin.set(false) end
+    pcall(destroyCharacterDiscordBillboard)
 end
 
 game:GetService("ScriptContext"):GetScriptsAddedSignal():Connect(function()

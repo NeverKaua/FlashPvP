@@ -188,7 +188,125 @@ local function _equipResetCarpet()
     return carpet.Parent == char
 end
 
+-- PROTECAO: nao resetar enquanto estiver carregando Brainrot de outro jogador.
+-- Reconhece atributos comuns usados pelo jogo/itens para indicar carga e proprietario.
+local function _valueMeansCarrying(value)
+    if value == true then return true end
+    if type(value) == "number" then return value > 0 end
+    if type(value) == "string" then
+        local v = value:lower()
+        return v ~= "" and v ~= "false" and v ~= "none" and v ~= "nil" and v ~= "0"
+    end
+    return false
+end
+
+local function _getOwnerUserId(inst)
+    if not inst then return nil end
+    for _, key in ipairs({"OwnerUserId", "OwnerId", "BrainrotOwnerUserId", "BrainrotOwnerId", "CreatorUserId"}) do
+        local value = inst:GetAttribute(key)
+        if value ~= nil then
+            local id = tonumber(value)
+            if id then return id end
+        end
+    end
+    for _, key in ipairs({"Owner", "BrainrotOwner", "Creator"}) do
+        local value = inst:GetAttribute(key)
+        if typeof(value) == "Instance" and value:IsA("Player") then return value.UserId end
+        if type(value) == "number" then return value end
+        if type(value) == "string" then
+            local id = tonumber(value)
+            if id then return id end
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Name:lower() == value:lower() or player.DisplayName:lower() == value:lower() then
+                    return player.UserId
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function _isCarryingAnotherPlayersBrainrot()
+    local char = LocalPlayer.Character
+    local containers = {LocalPlayer}
+    if char then table.insert(containers, char) end
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if backpack then table.insert(containers, backpack) end
+
+    -- O indicador “Stolen” aparece quando o Brainrot de outro jogador está na mão.
+    -- Pode ser texto da GUI ou uma etiqueta anexada ao personagem/modelo carregado.
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    for _, container in ipairs({playerGui, char}) do
+        if container then
+            for _, item in ipairs(container:GetDescendants()) do
+                if item:IsA("TextLabel") or item:IsA("TextButton") or item:IsA("TextBox") then
+                    local ok, value = pcall(function() return item.Text end)
+                    if ok and type(value) == "string" and value:lower():find("stolen", 1, true) then
+                        return true
+                    end
+                end
+                local name = (item.Name or ""):lower()
+                if name == "stolen" or name:find("stolen", 1, true) then return true end
+            end
+        end
+    end
+
+    local carryKeys = {"CarryingBrainrot", "IsCarryingBrainrot", "Carrying", "IsCarrying", "StealingBrainrot", "HoldingBrainrot"}
+    for _, container in ipairs(containers) do
+        for _, key in ipairs(carryKeys) do
+            local value = container:GetAttribute(key)
+            if _valueMeansCarrying(value) then
+                local owner = _getOwnerUserId(container)
+                if owner and owner ~= LocalPlayer.UserId then return true end
+                -- A positive explicit carry marker without local ownership is treated conservatively.
+                if key == "CarryingBrainrot" or key == "IsCarryingBrainrot" or key == "StealingBrainrot" or key == "HoldingBrainrot" then
+                    return true
+                end
+            end
+        end
+    end
+
+    local function inspect(item)
+        local name = (item.Name or ""):lower()
+        local isBrainrot = name:find("brainrot", 1, true) ~= nil
+        local owner = _getOwnerUserId(item)
+        if isBrainrot and owner and owner ~= LocalPlayer.UserId then return true end
+        if isBrainrot then
+            for _, key in ipairs(carryKeys) do
+                if _valueMeansCarrying(item:GetAttribute(key)) then return true end
+            end
+        end
+        return false
+    end
+
+    for _, container in ipairs({char, backpack}) do
+        if container then
+            for _, item in ipairs(container:GetDescendants()) do
+                if inspect(item) then return true end
+            end
+            for _, item in ipairs(container:GetChildren()) do
+                if inspect(item) then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function _notifyResetBlocked()
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = "Reset bloqueado",
+            Text = "Voce esta carregando um Brainrot de outro jogador. Entregue-o antes de resetar.",
+            Duration = 4
+        })
+    end)
+end
+
 local function ResetPlayer()
+    if _isCarryingAnotherPlayersBrainrot() then
+        _notifyResetBlocked()
+        return
+    end
     if resetCooldown then return end
     resetCooldown = true
     resetSuccessful = false
@@ -455,9 +573,9 @@ local function stopFlashLagger()
     pcall(function() settings().Network.IncomingReplicationLag = 0 end)
 end
 
--- FLASH SPEED (dynamic: 200 sem TP V2, 1000 com)
+-- FLASH SPEED (dynamic: 200 sem TP V2, 1200 com)
 local FLASH_SPEED_MAX_BASE = 200
-local FLASH_SPEED_MAX_TPV2 = 1000
+local FLASH_SPEED_MAX_TPV2 = 1200
 _G.FlashSpeed = _G.FlashSpeed or 150
 local function getFlashSpeed()
     local maxV = _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
@@ -5681,9 +5799,9 @@ local function BuildHUB()
 
     local function startFlashTeleportTimer()
         if flashTimeRunning then return end
-        flashTimeDeadline = tick() + 30
+        flashTimeDeadline = tick() + 20
         flashTimeRunning = true
-        flashTimeMessage.Text = "Cooldown Flash | 30.0s"
+        flashTimeMessage.Text = "Cooldown Flash | 20.0s"
         setFlashTimeReady(false)
     end
 
@@ -6547,7 +6665,7 @@ local function BuildHUB()
     end)
 
     sectionHeader(ScrollFlash, "  FLASH TP  ")
-    -- 🆕 TP V2 toggle (libera speed 1000 + jump + trigger extra)
+    -- 🆕 TP V2 toggle (libera speed 1200 + jump + trigger extra)
     toggleRow(ScrollFlash, "TP V2", _G.TPV2, function(v)
         _G.TPV2 = v
         -- clamp speed when disabling
@@ -6635,7 +6753,7 @@ local function BuildHUB()
         end)
     end
 
-    -- FLASH SPEED slider (dinâmico: 0–200 base / 0–1000 com TP V2)
+    -- FLASH SPEED slider (dinâmico: 0–200 base / 0- 1200 com TP V2)
     do
         sectionOrder += 1
         local speedLblRow = Instance.new("Frame")
@@ -6721,8 +6839,8 @@ local function BuildHUB()
 
     end
 
-    -- BYPASS PROTECT V2 (integrado diretamente na aba FLASH)
-    sectionHeader(ScrollFlash, "  BYPASS PROTECT V2  ")
+    -- BYPASS PROTECT V3 (integrado diretamente na aba FLASH)
+    sectionHeader(ScrollFlash, "  BYPASS PROTECT V3  ")
     toggleRow(ScrollFlash, "Active Block", _G.BypassProtectV1, function(enabled)
         BypassProtectV1.set(enabled)
         saveSettings()
@@ -7072,7 +7190,7 @@ local function BuildHUB()
         if not v then clearPlayerESP() end
         saveSettings()
     end)
-    toggleRow(ScrollVisual, "ESP Player Shadow", _G.PlayerESPShadow, function(v)
+    toggleRow(ScrollVisual, "Esp Shadow (You)", _G.PlayerESPShadow, function(v)
         _G.PlayerESPShadow = v
         if _G.ESPPlayerShadow and _G.ESPPlayerShadow.set then _G.ESPPlayerShadow.set(v) end
         saveSettings()
@@ -7659,7 +7777,7 @@ do
         version.Position = UDim2.fromOffset(6, 17)
         version.Size = UDim2.fromOffset(55, 12)
         version.Font = Enum.Font.GothamMedium
-        version.Text = "v1.0.0"
+        version.Text = "v1.0.1"
         version.TextColor3 = Color3.fromRGB(190, 160, 164)
         version.TextSize = 9
         version.TextXAlignment = Enum.TextXAlignment.Left

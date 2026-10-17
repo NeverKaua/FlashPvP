@@ -414,9 +414,9 @@ local function stopFlashLagger()
     pcall(function() settings().Network.IncomingReplicationLag = 0 end)
 end
 
--- FLASH SPEED (dynamic: 200 sem TP V2, 1200 com)
+-- FLASH SPEED (dynamic: 200 sem TP V2, 800 com)
 local FLASH_SPEED_MAX_BASE = 200
-local FLASH_SPEED_MAX_TPV2 = 1200
+local FLASH_SPEED_MAX_TPV2 = 800
 _G.FlashSpeed = _G.FlashSpeed or 150
 local function getFlashSpeed()
     local maxV = _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
@@ -968,6 +968,7 @@ local antiRagdollCharacterConn = nil
 local antiRagdollCached = {}
 
 local function antiRagdollCacheCharacter()
+    if not antiRagdollEnabled or _G.AntiRagdoll ~= true then return false end
     local char = LocalPlayer.Character
     if not char then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -985,6 +986,7 @@ local function antiRagdollCacheCharacter()
 end
 
 local function antiRagdollIsRagdolled()
+    if not antiRagdollEnabled or _G.AntiRagdoll ~= true then return false end
     local hum = antiRagdollCached.humanoid
     if not hum then return false end
     local state = hum:GetState()
@@ -998,6 +1000,7 @@ local function antiRagdollIsRagdolled()
 end
 
 local function antiRagdollRemoveConstraints()
+    if not antiRagdollEnabled or _G.AntiRagdoll ~= true then return end
     local char = antiRagdollCached.character
     if not char then return end
     for _, obj in ipairs(char:GetDescendants()) do
@@ -1009,6 +1012,7 @@ local function antiRagdollRemoveConstraints()
 end
 
 local function antiRagdollForceExit()
+    if not antiRagdollEnabled or _G.AntiRagdoll ~= true then return end
     local hum = antiRagdollCached.humanoid
     local root = antiRagdollCached.root
     if not hum or not root then return end
@@ -1040,12 +1044,12 @@ local function antiRagdollForceExit()
 end
 
 function startAntiRagdoll()
-    if antiRagdollEnabled then return end
+    if _G.AntiRagdoll ~= true or antiRagdollEnabled then return end
     antiRagdollEnabled = true
     antiRagdollCacheCharacter()
     if not antiRagdollRenderConn then
         antiRagdollRenderConn = RunService.Heartbeat:Connect(function()
-            if not antiRagdollEnabled then return end
+            if not antiRagdollEnabled or _G.AntiRagdoll ~= true then return end
             if not antiRagdollCached.humanoid or not antiRagdollCached.humanoid.Parent then
                 antiRagdollCacheCharacter()
                 return
@@ -1058,9 +1062,9 @@ function startAntiRagdoll()
     end
     if not antiRagdollCharacterConn then
         antiRagdollCharacterConn = LocalPlayer.CharacterAdded:Connect(function()
-            if not antiRagdollEnabled then return end
+            if not antiRagdollEnabled or _G.AntiRagdoll ~= true then return end
             task.wait(0.5)
-            antiRagdollCacheCharacter()
+            if antiRagdollEnabled and _G.AntiRagdoll == true then antiRagdollCacheCharacter() end
         end)
     end
 end
@@ -1759,6 +1763,7 @@ _G.LaggerPower = savedSettings.LaggerPower or 50
 _G.FlashSpeed = savedSettings.FlashSpeed or 150
 -- 🆕 TP V2
 _G.TPV2 = savedBool(savedSettings, "TPV2", false)
+_G.AntiBodySwap = savedBool(savedSettings, "AntiBodySwap", false)
 -- clamp flash speed to current max
 do
     local maxV = _G.TPV2 and FLASH_SPEED_MAX_TPV2 or FLASH_SPEED_MAX_BASE
@@ -3650,13 +3655,15 @@ _G.AntiAdmin = (function()
         end)
         local ctrl = getControls()
         if ctrl then pcall(function() ctrl:Enable() end) end
-        local state = hum:GetState()
-        if state == Enum.HumanoidStateType.Physics
-            or state == Enum.HumanoidStateType.Ragdoll
-            or state == Enum.HumanoidStateType.FallingDown
-            or state == Enum.HumanoidStateType.PlatformStanding then
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+        if _G.AntiRagdoll == true then
+            local state = hum:GetState()
+            if state == Enum.HumanoidStateType.Physics
+                or state == Enum.HumanoidStateType.Ragdoll
+                or state == Enum.HumanoidStateType.FallingDown
+                or state == Enum.HumanoidStateType.PlatformStanding then
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+            end
         end
     end
 
@@ -5389,13 +5396,17 @@ local function BuildHUB()
         local ACT_PADDING = 6
         local AH_HORIZONTAL = HEADER_H + 12 + ACT_BTN_H + 8
 
+        -- Migra o layout anterior para o novo nome do painel.
+        if uiLayout["ActionsFlashPanel"] == nil and uiLayout["ActionsPanel"] ~= nil then
+            uiLayout["ActionsFlashPanel"] = uiLayout["ActionsPanel"]
+        end
         local actionsPanel, actionsContent, actionsHdr = makePanel(
-            "ActionsPanel", "ACTIONS",
+            "ActionsFlashPanel", "ACTIONS FLASH",
             math.floor(screenW / 2 - AW / 2),
             math.floor(screenH * 0.07) - 25,
             AW, AH_HORIZONTAL, 180, AH_HORIZONTAL
         )
-        registerPanelLayout(actionsPanel, "ActionsPanel", 180, AH_HORIZONTAL)
+        registerPanelLayout(actionsPanel, "ActionsFlashPanel", 180, AH_HORIZONTAL)
 
         local btnContainer = Instance.new("Frame")
         btnContainer.Name = "ActionsContainer"
@@ -6179,12 +6190,12 @@ local function BuildHUB()
     local centerX = math.floor(screenW / 2 - QW / 2)
     local centerY = math.floor(screenH / 2 - QH / 2)
     local qapPanel, qapContent, qapHdr = makePanel(
-        "QuickAPPanel", "QUICK ADMIN",
+        "QuickAdminPanel", "QUICK ADMIN PANEL",
         centerX, centerY,
         QW, QH, 280, 60
     )
     -- Carrega antes dos listeners para não sobrescrever a posição salva com o padrão.
-    local savedQAPLayout = uiLayout["QuickAPPanel"]
+    local savedQAPLayout = uiLayout["QuickAdminPanel"] or uiLayout["QuickAPPanel"]
     if type(savedQAPLayout) == "table" then
         pcall(function()
             if savedQAPLayout.px and savedQAPLayout.py then
@@ -6196,7 +6207,7 @@ local function BuildHUB()
         end)
     end
     local function saveQAPLayout()
-        uiLayout["QuickAPPanel"] = {
+        uiLayout["QuickAdminPanel"] = {
             px = qapPanel.Position.X.Offset, py = qapPanel.Position.Y.Offset,
             pw = qapPanel.Size.X.Offset, ph = qapPanel.Size.Y.Offset,
         }
@@ -6471,8 +6482,6 @@ local function BuildHUB()
         AntiDie = function() return _G.AntiDie or false end,
         AutoBalloon = function() return _G.AutoBalloonEnabled == true end,
         SelectedFont = function() return _G.SelectedFont or "Gotham Bold" end,
-        HeadlessHorseman = function() return _G.HeadlessHorsemanEnabled == true end,
-        KorbloxLeg = function() return _G.KorbloxLegEnabled == true end,
         CloneESP = function() return _G.CloneESPEnabled == true end,
         AllowDisallowESP = function() return _G.AllowDisallowESPEnabled == true end,
         GameStretcher = function() return _G.GameStretcher and _G.GameStretcher.isEnabled() end,
@@ -6506,7 +6515,7 @@ local function BuildHUB()
     end)
 
     sectionHeader(ScrollFlash, "  FLASH TP  ")
-    -- 🆕 TP V2 toggle (libera speed 1200 + jump + trigger extra)
+    -- 🆕 TP V2 toggle (libera speed 800 + jump + trigger extra)
     toggleRow(ScrollFlash, "TP V2", _G.TPV2, function(v)
         _G.TPV2 = v
         -- clamp speed when disabling
@@ -6514,6 +6523,10 @@ local function BuildHUB()
             _G.FlashSpeed = FLASH_SPEED_MAX_BASE
         end
         if _refreshSpeedSlider then pcall(_refreshSpeedSlider) end
+        saveSettings()
+    end)
+    toggleRow(ScrollFlash, "Anti Body Swap", _G.AntiBodySwap == true, function(v)
+        _G.AntiBodySwap = v
         saveSettings()
     end)
     toggleRow(ScrollFlash, "Ragdoll Bypass", _G.RagdollBypass, function(v) _G.RagdollBypass = v end)
@@ -6594,7 +6607,7 @@ local function BuildHUB()
         end)
     end
 
-    -- FLASH SPEED slider (dinâmico: 0–200 base / 0- 1200 com TP V2)
+    -- FLASH SPEED slider (dinâmico: 0–200 base / 0- 800 com TP V2)
     do
         sectionOrder += 1
         local speedLblRow = Instance.new("Frame")
@@ -6680,8 +6693,8 @@ local function BuildHUB()
 
     end
 
-    -- BYPASS PROTECT V3 (integrado diretamente na aba FLASH)
-    sectionHeader(ScrollFlash, "  BYPASS PROTECT V3  ")
+    -- BYPASS PROTECT V1 (integrado diretamente na aba FLASH)
+    sectionHeader(ScrollFlash, "  BYPASS PROTECT V1  ")
     toggleRow(ScrollFlash, "Active Block", _G.BypassProtectV1, function(enabled)
         BypassProtectV1.set(enabled)
         saveSettings()
@@ -6837,8 +6850,9 @@ local function BuildHUB()
     sectionHeader(ScrollMisc, "  MISC  ")
 
     toggleRow(ScrollMisc, "Anti Ragdoll", _G.AntiRagdoll, function(v)
-        _G.AntiRagdoll = v
-        if v then startAntiRagdoll() else stopAntiRagdoll() end
+        _G.AntiRagdoll = v == true
+        if _G.AntiRagdoll then startAntiRagdoll() else stopAntiRagdoll() end
+        saveSettings()
     end)
     toggleRow(ScrollMisc, "Quick Admin Panel", _G.QuickAP, function(v)
         _G.QuickAP = v
@@ -7031,12 +7045,12 @@ local function BuildHUB()
         if not v then clearPlayerESP() end
         saveSettings()
     end)
-    toggleRow(ScrollVisual, "Esp Shadow (You)", _G.PlayerESPShadow, function(v)
+    toggleRow(ScrollVisual, "Esp Your Reflection", _G.PlayerESPShadow, function(v)
         _G.PlayerESPShadow = v
         if _G.ESPPlayerShadow and _G.ESPPlayerShadow.set then _G.ESPPlayerShadow.set(v) end
         saveSettings()
     end)
-    toggleRow(ScrollVisual, "ESP Best Brainrot", _G.EspBestBrainrot, function(v)
+    toggleRow(ScrollVisual, "Esp Best Brainrot", _G.EspBestBrainrot, function(v)
         _G.EspBestBrainrot = v
         if _G.EspBestBrainrotController and _G.EspBestBrainrotController.set then
             _G.EspBestBrainrotController.set(v)
@@ -7066,120 +7080,6 @@ local function BuildHUB()
         setMineESP(v)
         saveSettings()
     end)
-
-    sectionHeader(ScrollVisual, "  VISUAL  ")
-
-    do
-        sectionOrder += 1
-        local headlessRow = Instance.new("Frame")
-        headlessRow.Size = UDim2.new(0.92, 0, 0, 42)
-        headlessRow.AnchorPoint = Vector2.new(0.5, 0)
-        headlessRow.BackgroundColor3 = C.card
-        headlessRow.BackgroundTransparency = 0.35
-        headlessRow.BorderSizePixel = 0
-        headlessRow.LayoutOrder = sectionOrder
-        headlessRow.Parent = ScrollVisual
-        headlessRow.ZIndex = 6
-        Instance.new("UICorner", headlessRow).CornerRadius = UDim.new(0, 8)
-        local headlessStroke = Instance.new("UIStroke", headlessRow)
-        headlessStroke.Color = C.strokeDim
-        headlessStroke.Transparency = 0.2
-
-        local headlessLabel = Instance.new("TextLabel", headlessRow)
-        headlessLabel.Size = UDim2.new(1, -112, 1, 0)
-        headlessLabel.Position = UDim2.new(0, 12, 0, 0)
-        headlessLabel.BackgroundTransparency = 1
-        headlessLabel.Text = "Headless Horseman"
-        headlessLabel.TextColor3 = C.textBright
-        headlessLabel.TextSize = 12
-        headlessLabel.Font = Enum.Font.GothamMedium
-        headlessLabel.TextXAlignment = Enum.TextXAlignment.Left
-        headlessLabel.ZIndex = 7
-
-        local headlessButton = Instance.new("TextButton", headlessRow)
-        headlessButton.Size = UDim2.new(0, 88, 0, 26)
-        headlessButton.Position = UDim2.new(1, -98, 0.5, -13)
-        headlessButton.BackgroundColor3 = C.iconBg
-        headlessButton.BorderSizePixel = 0
-        headlessButton.AutoButtonColor = false
-        headlessButton.TextSize = 11
-        headlessButton.Font = Enum.Font.GothamBold
-        headlessButton.ZIndex = 8
-        Instance.new("UICorner", headlessButton).CornerRadius = UDim.new(0, 6)
-        local headlessButtonStroke = Instance.new("UIStroke", headlessButton)
-        headlessButtonStroke.Color = C.accent
-        headlessButtonStroke.Transparency = 0.2
-
-        local function refreshHeadlessButton()
-            local active = HeadlessHorseman.isEnabled()
-            headlessButton.Text = active and "Active" or "Disable"
-            headlessButton.TextColor3 = active and C.accentHi or C.textMute
-            headlessButton.BackgroundTransparency = active and 0.05 or 0.35
-        end
-        headlessButton.MouseButton1Click:Connect(function()
-            _G.HeadlessHorsemanEnabled = not _G.HeadlessHorsemanEnabled
-            HeadlessHorseman.set(_G.HeadlessHorsemanEnabled)
-            refreshHeadlessButton()
-            saveSettings()
-        end)
-        refreshHeadlessButton()
-    end
-
-    do
-        sectionOrder += 1
-        local korbloxRow = Instance.new("Frame")
-        korbloxRow.Size = UDim2.new(0.92, 0, 0, 42)
-        korbloxRow.AnchorPoint = Vector2.new(0.5, 0)
-        korbloxRow.BackgroundColor3 = C.card
-        korbloxRow.BackgroundTransparency = 0.35
-        korbloxRow.BorderSizePixel = 0
-        korbloxRow.LayoutOrder = sectionOrder
-        korbloxRow.Parent = ScrollVisual
-        korbloxRow.ZIndex = 6
-        Instance.new("UICorner", korbloxRow).CornerRadius = UDim.new(0, 8)
-        local korbloxStroke = Instance.new("UIStroke", korbloxRow)
-        korbloxStroke.Color = C.strokeDim
-        korbloxStroke.Transparency = 0.2
-
-        local korbloxLabel = Instance.new("TextLabel", korbloxRow)
-        korbloxLabel.Size = UDim2.new(1, -112, 1, 0)
-        korbloxLabel.Position = UDim2.new(0, 12, 0, 0)
-        korbloxLabel.BackgroundTransparency = 1
-        korbloxLabel.Text = "Korblox Leg"
-        korbloxLabel.TextColor3 = C.textBright
-        korbloxLabel.TextSize = 12
-        korbloxLabel.Font = Enum.Font.GothamMedium
-        korbloxLabel.TextXAlignment = Enum.TextXAlignment.Left
-        korbloxLabel.ZIndex = 7
-
-        local korbloxButton = Instance.new("TextButton", korbloxRow)
-        korbloxButton.Size = UDim2.new(0, 88, 0, 26)
-        korbloxButton.Position = UDim2.new(1, -98, 0.5, -13)
-        korbloxButton.BackgroundColor3 = C.iconBg
-        korbloxButton.BorderSizePixel = 0
-        korbloxButton.AutoButtonColor = false
-        korbloxButton.TextSize = 11
-        korbloxButton.Font = Enum.Font.GothamBold
-        korbloxButton.ZIndex = 8
-        Instance.new("UICorner", korbloxButton).CornerRadius = UDim.new(0, 6)
-        local korbloxButtonStroke = Instance.new("UIStroke", korbloxButton)
-        korbloxButtonStroke.Color = C.accent
-        korbloxButtonStroke.Transparency = 0.2
-
-        local function refreshKorbloxButton()
-            local active = KorbloxLeg.isEnabled()
-            korbloxButton.Text = active and "Active" or "Disable"
-            korbloxButton.TextColor3 = active and C.accentHi or C.textMute
-            korbloxButton.BackgroundTransparency = active and 0.05 or 0.35
-        end
-        korbloxButton.MouseButton1Click:Connect(function()
-            _G.KorbloxLegEnabled = not _G.KorbloxLegEnabled
-            KorbloxLeg.set(_G.KorbloxLegEnabled)
-            refreshKorbloxButton()
-            saveSettings()
-        end)
-        refreshKorbloxButton()
-    end
 
     sectionHeader(ScrollVisual, "  BACKPACK ESP  ")
     do
@@ -7406,7 +7306,7 @@ local function BuildHUB()
 
     sectionHeader(ScrollKeybinds, "  KEYBIRDS  ")
     local keybindRows = {
-        { action = "flash", title = "FLASH TP" },
+        { action = "flash", title = "Flash TP" },
         { action = "block", title = "Block" },
         { action = "reset", title = "Reset" },
         { action = "allow", title = "Allow/Disallow" },
@@ -7482,7 +7382,7 @@ local function BuildHUB()
             keyNames[actionName] = inp2.KeyCode.Name
             saveKeybinds()
             if displayButton then
-                displayButton.Text = actionName == "flash" and "FLASH TP"
+                displayButton.Text = actionName == "flash" and "Flash TP"
                     or actionName == "block" and "BLOCK"
                     or actionName == "reset" and "RESET"
                     or actionName == "allow" and keyNames.allow
@@ -7505,7 +7405,7 @@ local function BuildHUB()
             end
         end)
     end
-    attachKeybindRightClick(FLASHTP, "flash", "FLASH TP")
+    attachKeybindRightClick(FLASHTP, "flash", "Flash TP")
     attachKeybindRightClick(BLOCK, "block", "BLOCK")
     attachKeybindRightClick(RESET, "reset", "RESET")
 
@@ -7618,7 +7518,7 @@ do
         version.Position = UDim2.fromOffset(6, 17)
         version.Size = UDim2.fromOffset(55, 12)
         version.Font = Enum.Font.GothamMedium
-        version.Text = "v1.0.1"
+        version.Text = "v1.0.2"
         version.TextColor3 = Color3.fromRGB(190, 160, 164)
         version.TextSize = 9
         version.TextXAlignment = Enum.TextXAlignment.Left
@@ -7853,8 +7753,6 @@ task.defer(function()
         if _G.AutoTurretEnabled and _G.AutoTurret and _G.AutoTurret.set then _G.AutoTurret.set(true) end
         if _G.GummyBypassEnabled and _G.GummyBypass and _G.GummyBypass.set then _G.GummyBypass.set(true) end
         if _G.AntiAdminEnabled and _G.AntiAdmin and _G.AntiAdmin.set then _G.AntiAdmin.set(true) end
-        if _G.HeadlessHorsemanEnabled then HeadlessHorseman.set(true) end
-        if _G.KorbloxLegEnabled then KorbloxLeg.set(true) end
     end)
 end)
 

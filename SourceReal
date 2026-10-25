@@ -67,9 +67,10 @@
 ⠀⠀⣀⠀⡠⢎⣠⣶⣿⣿⡿⣆⢙⢟⠨⡙⠯⢛⡜⣧⣛⠪⠝⣶⠀⠉⠞⢳⠆⠙⠾⡜⡇⠈⣝⢮⣏⢷⡹⣖⡻⣝⠾⡀⢈⢳⠘⣾⡹⣖⡻⣵⣙⠺⢝⠘⠆⠃⠸⣝⡞⣞⠶⢓⢌⡞⢁⡸⢧⡻⣜⡳⣎⣗⣫⢵⣋⢾⡱⣫⠖⠋⠤⣉⠒⣡
 ]]
 
--- no leaked plss 
--- i nigger :(
--- fuck you nigger i no post source original lol
+-- i from brazil
+-- i from brazil
+-- u from what?
+-- Nigéria , lol i nigger ))))
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
@@ -6297,6 +6298,184 @@ local function BuildHUB()
 end
 
 BuildHUB()
+
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace  = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+local container
+do
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    container = Instance.new("Folder")
+    container.Name = "OrthDeliveryESP"
+    if ok and cg then
+        container.Parent = cg
+    else
+        container.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    end
+end
+
+local FILL    = Color3.fromRGB(255, 0, 0)
+local OUTLINE = Color3.fromRGB(255, 40, 40)
+
+local espMap      = {}
+local trackedPlot = {}
+
+local function getPlotOwner(plot)
+    local sign = plot:FindFirstChild("PlotSign")
+    local gui  = sign and sign:FindFirstChild("SurfaceGui")
+    local fr   = gui  and gui:FindFirstChild("Frame")
+    local lbl  = fr   and fr:FindFirstChild("TextLabel")
+    if lbl and lbl:IsA("TextLabel") and lbl.Text ~= "" and lbl.Text ~= "Empty Base" then
+        local name = tostring(lbl.Text):match("^(.-)'s Base")
+        if name and name ~= "" and not name:upper():find("YOUR BASE", 1, true) then
+            return name
+        end
+    end
+    return nil
+end
+
+local function createESP(plot, hitbox)
+    if espMap[hitbox] then return end
+
+    local part
+    if hitbox:IsA("BasePart") then
+        part = hitbox
+    else
+        for _, d in ipairs(hitbox:GetDescendants()) do
+            if d:IsA("BasePart") then part = d; break end
+        end
+    end
+    if not part then return end
+
+    local offY = math.max(4, part.Size.Y / 2 + 2)
+
+    local hl = Instance.new("Highlight")
+    hl.Name                 = "OrthDeliveryHL"
+    hl.Adornee              = hitbox
+    hl.FillColor            = FILL
+    hl.OutlineColor         = OUTLINE
+    hl.FillTransparency     = 0.42
+    hl.OutlineTransparency  = 0
+    hl.DepthMode            = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Enabled              = false
+    hl.Parent               = container
+
+    local sb = Instance.new("SelectionBox")
+    sb.Name                = "OrthDeliverySB"
+    sb.Adornee             = hitbox
+    sb.Color3              = FILL
+    sb.LineThickness       = 0.04
+    sb.SurfaceTransparency = 1
+    sb.SurfaceColor3       = FILL
+    sb.Parent              = nil
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name               = "OrthDeliveryESP"
+    bb.Adornee            = part
+    bb.Size               = UDim2.new(0, 210, 0, 20)
+    bb.StudsOffset        = Vector3.new(0, offY, 0)
+    bb.AlwaysOnTop        = true
+    bb.LightInfluence     = 0
+    bb.MaxDistance        = math.huge
+    bb.ClipsDescendants   = false
+    bb.Enabled            = false
+    bb.Parent             = container
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Size                   = UDim2.new(1, 0, 0, 16)
+    lbl.Font                   = Enum.Font.GothamBold
+    lbl.TextSize               = 13
+    lbl.TextColor3             = OUTLINE
+    lbl.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+    lbl.TextStrokeTransparency = 0.25
+    lbl.Text                   = "Delivery"
+    lbl.Parent                 = bb
+
+    espMap[hitbox] = { hl = hl, sb = sb, bb = bb, plot = plot, owner = nil, active = false }
+end
+
+local function destroyESP(hitbox)
+    local e = espMap[hitbox]
+    if not e then return end
+    espMap[hitbox] = nil
+    pcall(function() e.hl:Destroy() end)
+    pcall(function() e.sb:Destroy() end)
+    pcall(function() e.bb:Destroy() end)
+end
+
+local function trackPlot(plot)
+    if trackedPlot[plot] then return end
+    trackedPlot[plot] = true
+
+    local function try()
+        local hitbox = plot:FindFirstChild("DeliveryHitbox")
+                    or plot:FindFirstChild("DeliveryHitbox", true)
+        if hitbox then createESP(plot, hitbox) end
+    end
+
+    try()
+    plot.ChildAdded:Connect(function(c)
+        if c.Name == "DeliveryHitbox" then task.defer(try) end
+    end)
+end
+
+local acc = 0
+RunService.Heartbeat:Connect(function(dt)
+    acc += dt
+    if acc < 0.2 then return end
+    acc = 0
+
+    local plots = Workspace:FindFirstChild("Plots")
+    if not plots then return end
+
+    local names = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        names[p.Name] = true
+        names[p.DisplayName] = true
+    end
+
+    for hitbox, e in pairs(espMap) do
+        if not hitbox.Parent or not hitbox:IsDescendantOf(Workspace) then
+            destroyESP(hitbox)
+        else
+            local owner  = e.plot and getPlotOwner(e.plot)
+            local active = owner and names[owner] or false
+            e.owner, e.active = owner, active
+
+            if e.hl.Enabled ~= active then e.hl.Enabled = active end
+            if e.bb.Enabled ~= active then e.bb.Enabled = active end
+
+            if active then
+                if e.sb.Parent ~= container then e.sb.Parent = container end
+            else
+                if e.sb.Parent ~= nil then e.sb.Parent = nil end
+            end
+        end
+    end
+
+    for _, plot in ipairs(plots:GetChildren()) do
+        if not trackedPlot[plot] then trackPlot(plot) end
+    end
+end)
+
+task.spawn(function()
+    local plots = Workspace:WaitForChild("Plots", 15)
+    if not plots then return end
+    for _, plot in ipairs(plots:GetChildren()) do
+        trackPlot(plot)
+    end
+    plots.ChildAdded:Connect(function(p) task.spawn(trackPlot, p) end)
+    plots.ChildRemoved:Connect(function(p)
+        trackedPlot[p] = nil
+        for hitbox, e in pairs(espMap) do
+            if e.plot == p then destroyESP(hitbox) end
+        end
+    end)
+end)
 
 -- ============================================================
 -- FPS + PING OVERLAY (usa safeCreateScreenGui)

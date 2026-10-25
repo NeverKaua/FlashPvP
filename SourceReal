@@ -67,6 +67,9 @@
 ⠀⠀⣀⠀⡠⢎⣠⣶⣿⣿⡿⣆⢙⢟⠨⡙⠯⢛⡜⣧⣛⠪⠝⣶⠀⠉⠞⢳⠆⠙⠾⡜⡇⠈⣝⢮⣏⢷⡹⣖⡻⣝⠾⡀⢈⢳⠘⣾⡹⣖⡻⣵⣙⠺⢝⠘⠆⠃⠸⣝⡞⣞⠶⢓⢌⡞⢁⡸⢧⡻⣜⡳⣎⣗⣫⢵⣋⢾⡱⣫⠖⠋⠤⣉⠒⣡
 ]]
 
+-- no leaked plss 
+-- i nigger :(
+-- fuck you nigger i no post source original lol
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
@@ -3192,7 +3195,7 @@ local function isMyPlot(plot)
 end
 
 -- ============================================================
--- BYPASS PROTECT V1
+-- BYPASS PROTECT
 -- ============================================================
 local BypassProtectV1 = {
     enabled = false,
@@ -5600,7 +5603,7 @@ local function BuildHUB()
     end
 
     -- BYPASS PROTECT V1
-    sectionHeader(ScrollFlash, "  BYPASS PROTECT V1  ")
+    sectionHeader(ScrollFlash, "  BYPASS PROTECT  ")
     toggleRow(ScrollFlash, "Active Block", _G.BypassProtectV1, function(enabled)
         BypassProtectV1.set(enabled)
         saveSettings()

@@ -1954,6 +1954,78 @@ do
 end
 
 -- ============================================================
+-- ESP TIMER (portado da versão funcional de referência)
+-- ============================================================
+-- ESP TIMER
+local baseEspInstances = {}
+local function createBaseESP(plot, mainPart)
+    if baseEspInstances[plot.Name] then baseEspInstances[plot.Name]:Destroy() end
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "67_Timer"
+    bb.Size = UDim2.new(0, 50, 0, 20)
+    bb.StudsOffset = Vector3.new(0, 4, 0)
+    bb.AlwaysOnTop = true
+    bb.Adornee = mainPart
+    bb.MaxDistance = 1000
+    bb.Parent = plot
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.TextScaled = true
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextColor3 = Color3.fromRGB(235, 50, 60)
+    lbl.TextStrokeTransparency = 0
+    lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+    lbl.Parent = bb
+    baseEspInstances[plot.Name] = bb
+    return bb
+end
+local function clearBaseESP()
+    for k, v in pairs(baseEspInstances) do v:Destroy() baseEspInstances[k] = nil end
+end
+local function toSecondsOnlyESP(text)
+    if typeof(text) ~= "string" then return text end
+    local m, s = text:match("(%d+):(%d+)")
+    if m and s then
+        local total = tonumber(m) * 60 + tonumber(s)
+        return tostring(total)
+    end
+    local n = text:match("(%d+)")
+    if n then return n end
+    return text
+end
+local function updateBaseESP()
+    if not _G.EspTimer then
+        if next(baseEspInstances) then clearBaseESP() end
+        return
+    end
+    local plotsFolder = Workspace:FindFirstChild("Plots")
+    if not plotsFolder then return end
+    for _, plot in ipairs(plotsFolder:GetChildren()) do
+        local purchases = plot:FindFirstChild("Purchases")
+        local plotBlock = purchases and purchases:FindFirstChild("PlotBlock")
+        local mainPart = plotBlock and plotBlock:FindFirstChild("Main")
+        local bb = baseEspInstances[plot.Name]
+        local timeLabel = mainPart and mainPart:FindFirstChild("BillboardGui") and mainPart.BillboardGui:FindFirstChild("RemainingTime")
+        if timeLabel and mainPart then
+            bb = bb or createBaseESP(plot, mainPart)
+            local lbl = bb:FindFirstChildWhichIsA("TextLabel")
+            local converted = toSecondsOnlyESP(timeLabel.Text)
+            if lbl then lbl.Text = converted end
+        elseif bb then
+            bb:Destroy() baseEspInstances[plot.Name] = nil
+        end
+    end
+end
+task.spawn(function()
+    while true do
+        pcall(updateBaseESP)
+        task.wait(0.4)
+    end
+end)
+
+
+-- ============================================================
 -- PLAYER ESP
 -- ============================================================
 local playerEspInstances = {}
@@ -4586,6 +4658,8 @@ local function BuildHUB()
     end
 
     local allowState = false
+    local allowActionBusy = false
+    local allowActionLast = 0
     allowBtn.BackgroundColor3 = C.card
     local function toggleAllow()
         if not _G.AllowDisallowEnabled then return end
@@ -4602,18 +4676,31 @@ local function BuildHUB()
             allowAccent.BackgroundColor3 = C.accentHi
             TweenService:Create(allowAccent, TweenInfo.new(0.4), { BackgroundColor3 = C.stroke }):Play()
         end
-        local cmdName = allowState and "allow" or "disallow"
-        if ExecuteCommand then ExecuteCommand(cmdName, LocalPlayer.Name) return end
+        -- Mesmo fluxo usado pela fonte de referência: aciona todos os prompts
+        -- presentes em FriendPanel.Main, pois pode haver mais de um painel/plot.
+        local now = tick()
+        if allowActionBusy or now - allowActionLast < 1 then return end
+        allowActionBusy = true
+        allowActionLast = now
+        local firedCount = 0
         local plotsFolder = Workspace:FindFirstChild("Plots")
-        if plotsFolder then
+        if plotsFolder and type(fireproximityprompt) == "function" then
             for _, plot in ipairs(plotsFolder:GetChildren()) do
-                if isMyPlot(plot) then
-                    local prompt = plot:FindFirstChild("FriendPanel")
-                        and plot.FriendPanel:FindFirstChild("Main")
-                        and plot.FriendPanel.Main:FindFirstChild("ProximityPrompt")
-                    if prompt then pcall(fireproximityprompt, prompt) end
+                local friendPanel = plot:FindFirstChild("FriendPanel", true)
+                local main = friendPanel and friendPanel:FindFirstChild("Main", true)
+                if main then
+                    for _, descendant in ipairs(main:GetDescendants()) do
+                        if descendant:IsA("ProximityPrompt") and descendant.Enabled then
+                            local ok = pcall(fireproximityprompt, descendant)
+                            if ok then firedCount += 1 end
+                        end
+                    end
                 end
             end
+        end
+        task.delay(1, function() allowActionBusy = false end)
+        if firedCount == 0 then
+            warn("[Orth] Allow/Disallow: nenhum ProximityPrompt ativo encontrado em FriendPanel.Main")
         end
     end
     allowBtn.MouseButton1Click:Connect(toggleAllow)
@@ -5208,32 +5295,47 @@ local function BuildHUB()
     end)
 
     ExecuteCommand = function(cmd, playerName)
-        if not playerName then return end
+        if not playerName then return false end
         local TextBox = _qapTextBox
-        if not TextBox then return end
+        if not TextBox or not TextBox.Parent then
+            local ok, found = pcall(function()
+                return LocalPlayer.PlayerGui:FindFirstChild("AdminPanel")
+                    and LocalPlayer.PlayerGui.AdminPanel:FindFirstChild("AdminPanel")
+                    and LocalPlayer.PlayerGui.AdminPanel.AdminPanel:FindFirstChild("CommandBox")
+                    and LocalPlayer.PlayerGui.AdminPanel.AdminPanel.CommandBox:FindFirstChild("TextBox")
+            end)
+            if ok then TextBox = found end
+        end
+        if not TextBox or not TextBox.Parent then return false end
         local fullCmd = ";" .. cmd .. " " .. playerName
         local originalVisible = TextBox.Visible
-        TextBox.Visible = false
-        TextBox.Text = fullCmd
-        task.wait(0.05)
+        local originalText = TextBox.Text
         local executed = false
+        local ok = pcall(function()
+            TextBox.Visible = true
+            TextBox.Text = fullCmd
+        end)
+        if not ok then return false end
+        task.wait(0.05)
         if firesignal then
-            pcall(function()
-                firesignal(TextBox.FocusLost, true)
-                executed = true
-            end)
+            local fired = pcall(function() firesignal(TextBox.FocusLost, true) end)
+            executed = fired
         end
         if not executed and getconnections then
-            pcall(function()
-                for _, conn in pairs(getconnections(TextBox.FocusLost)) do
-                    conn:Fire(true)
+            local fired = pcall(function()
+                local connections = getconnections(TextBox.FocusLost)
+                for _, conn in pairs(connections) do
+                    if conn.Fire then conn:Fire(true) end
                 end
-                executed = true
             end)
+            executed = fired
         end
         task.wait(0.05)
-        TextBox.Text = ""
-        TextBox.Visible = originalVisible
+        pcall(function()
+            TextBox.Text = originalText
+            TextBox.Visible = originalVisible
+        end)
+        return executed
     end
 
     local function qapRunCommand(commandName, target)
